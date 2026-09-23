@@ -395,7 +395,8 @@ class Agent:
                 money_left -= extra_cost
 
         # 2б) остаток контактов — бесплатный push по ячейкам с положительной средней оценкой
-        if self.push_leftover and contacts_left > 0:
+        #     (как и в MILP-пути, отключается, если пилоты показали, что история ненадёжна)
+        if self.push_leftover and contacts_left > 0 and not self._history_unreliable():
             s_push = self._scale(env, "push")
             taken_cells = {r["cell"] for r in chosen}
             rest = cand.assign(mean=mu, sd=sd)
@@ -408,7 +409,7 @@ class Agent:
                 if take <= 0:
                     break
                 z_r = self.z_safe if r["n_obs"] > 0 else self.z_unpiloted
-                d = dict(r, take=take, channel="push", unit_cost=0.0,
+                d = dict(r, take=take, channel="push", unit_cost=0.0, extra=True,
                          v_low=s_push * (r["mean"] - z_r * r["sd"]) * r["arpu_mean"],
                          low=r["mean"] - z_r * r["sd"])
                 chosen.append(d)
@@ -439,10 +440,11 @@ class Agent:
             sel2 = self._select_milp(rest.assign(objective=rest["v_mean"]), contacts_left - used_contacts,
                                      money_left - used_money, MAX_CAMPAIGNS - slots_used)
             if sel2 is not None:
-                chosen += [dict(r, take=int(r["n_use"])) for _, r in sel2.iterrows()]
+                chosen += [dict(r, take=int(r["n_use"]), extra=True) for _, r in sel2.iterrows()]
         return chosen
 
     def _pack_and_report(self, env, cand, mu, sd, chosen):
+        self.n_extra_campaigns_ = 0
         # 3) журнал отказов по проверенным связкам
         chosen_keys = {(r["cell"], r["target_tariff"]) for r in chosen}
         tested = cand[cand["n_obs"] > 0]
@@ -488,8 +490,11 @@ class Agent:
                            "filter_current_tariff": tariffs, "target_tariff": target, "channel": channel})
             reason = "; ".join(
                 f"{r['current_tariff']}: эффект {r['mean']:+.3f}±{r['sd']:.3f} "
-                f"({'пилоты ' + str(int(r['n_obs'])) + ' абон.' if r['n_obs'] > 0 else 'по калибровке пилотов'})"
+                f"({'пилоты ' + str(int(r['n_obs'])) + ' абон.' if r['n_obs'] > 0 else 'по калибровке пилотов'}"
+                f"{'; доп. бесплатный push по положительной средней оценке, нижняя граница не гарантирована' if r.get('extra') else ''})"
                 for r in items)
+            if any(r.get("extra") for r in items):
+                self.n_extra_campaigns_ += 1
             rows.append({"campaign_name": name, "filters": f"arpu={seg}; tariffs={tariffs}",
                          "target_tariff": target, "channel": channel, "n_customers": n_c,
                          "expected_net": exp_net, "lower_bound": low_net, "reason": reason})
@@ -536,6 +541,18 @@ class Agent:
         return pd.DataFrame(rows, columns=["current_tariff", "arpu_segment", "target_tariff", "m0", "se_hist",
                                            "n_hist", "conv"])
 
+    def _plan_summary(self, campaigns):
+        if any(t["phase"] == "decision" and "минимальную кампанию" in t["note"] for t in self.trace):
+            return ("Ни одна связка не прошла порог окупаемости, поэтому возвращена одна минимальная "
+                    "резервная кампания; прибыль не гарантирована.")
+        extra = getattr(self, "n_extra_campaigns_", 0)
+        main = len(campaigns) - extra
+        text = f"В плане {len(campaigns)} кампаний: {main} — из связок, у которых нижняя граница оценки окупает контакт."
+        if extra:
+            text += (f" Ещё {extra} включают бесплатный push на остаток контактов по положительной средней оценке — "
+                     f"для них нижняя граница не гарантирована (помечены в обосновании).")
+        return text
+
     # -------------------------------------------------------------------- act
     def act(self, env):
         self.trace, self.plan_table, self.explanation = [], None, None
@@ -554,7 +571,6 @@ class Agent:
         self.explanation = (
             f"Агент провёл {n_pilots} пилотов в {n_cells} ячейках, выбирая каждый следующий пилот по ожидаемой "
             f"пользе для итогового плана (Knowledge Gradient). По результатам пилотов он откалибровал историю "
-            f"под эту аудиторию и отобрал {len(campaigns)} кампаний, у которых нижняя граница оценки окупает "
-            f"контакт. Канал выбран под ценность абонента: digital_ads — там, где доплата окупается, "
-            f"push — где эффект мал, иначе SMS.")
+            f"под эту аудиторию. {self._plan_summary(campaigns)} Канал выбран под ценность абонента: "
+            f"digital_ads — там, где доплата окупается, push — где эффект мал, иначе SMS.")
         return campaigns
