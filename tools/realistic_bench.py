@@ -3,7 +3,7 @@
 Автор стенда — независимый ревьюер (Claude, аналитический чат команды). Запуск из корня репозитория:
     python tools/realistic_bench.py "{'agent': ('agent', {})}" 3 300
 """
-import os, sys, importlib, warnings, contextlib, io
+import ast, os, sys, importlib, warnings, contextlib, io
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 os.chdir(ROOT)
@@ -21,7 +21,7 @@ for k in range(6):
 for k in range(3):
     rng = np.random.default_rng((int(sys.argv[3]) + 100 if len(sys.argv) > 3 else 200) + k); s = base.copy()
     s["arpu_change_pct"] = (0.3 * s["arpu_change_pct"] + rng.normal(0.05, 0.6, len(s))).clip(-1, 3); scen[f"weak#{k}"] = s
-configs = eval(sys.argv[1]); seeds = range(int(sys.argv[2]))
+configs = ast.literal_eval(sys.argv[1]); seeds = range(int(sys.argv[2]))
 opt = {n: oracle(m, profile, dt) for n, m in scen.items()}
 out = []
 for name, (mod, kw) in configs.items():

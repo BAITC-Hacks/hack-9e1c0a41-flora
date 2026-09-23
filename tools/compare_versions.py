@@ -6,6 +6,7 @@
 Каждая версия — путь к файлу с классом Agent; kwargs задаются словарём по имени версии.
 Запускать из корня репозитория.
 """
+import ast
 import importlib.util
 import os
 import sys
@@ -30,7 +31,7 @@ def load(path, name):
 def main():
     mods = {n: load(p, n) for n, p in (a.split("=") for a in sys.argv[1].split(","))}
     seeds = [int(x) for x in sys.argv[2].split(",")] if len(sys.argv) > 2 else [0, 1, 2]
-    kwargs = eval(sys.argv[3]) if len(sys.argv) > 3 else {}
+    kwargs = ast.literal_eval(sys.argv[3]) if len(sys.argv) > 3 else {}
     profile = pd.read_csv("customer_profile.csv")
     dict_tariff = pd.read_csv("data/dict_tariff.csv")
     scen = _scenarios(_mock_impact_model(pd.read_csv("data/change_tariff.csv")))

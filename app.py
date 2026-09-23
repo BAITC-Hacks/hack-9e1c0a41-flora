@@ -676,6 +676,8 @@ CASE_FACTS = {
     "not_modeled": ["выгода, удовлетворённость и отток абонентов", "реальные данные и кампании Beeline",
                     "причины поведения абонентов", "гарантия прибыли на скрытой модели"],
     "data": "Данные синтетические; числа — условные единицы симулятора.",
+    "metrics_meaning": "net_arpu_gain — фактический результат скорера мок-среды для этого прогона (seed), а не прогноз "
+                       "и не ожидаемая прибыль на скрытой модели; expected_net и lower_bound в плане — модельные оценки агента.",
 }
 
 
@@ -721,13 +723,16 @@ def unsupported_numbers(text, context):
     known = [abs(float(x)) for x in re.findall(r"-?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?", source)]
     known = [k for k in known if k >= 1]
     unknown = []
-    pattern = r"(\d[\d\s  ]*(?:[.,]\d+)*)\s*(млн|million|mln|тыс|thousand|k)?"
+    pattern = (r"(\d[\d\s  ]*(?:[.,]\d+)*)\s*"
+               r"(млрд\w*|миллиард\w*|billion\w*|bn|млн\w*|миллион\w*|million\w*|mln|тыс\w*|thousand\w*|k)?")
     for match in re.finditer(pattern, text, re.I):
         raw, suffix = match.group(1).strip(), (match.group(2) or "").lower()
         value = _parse_number(raw)
         if value is None or value < 100 and not suffix:   # мелкие числа (10 кампаний, 20 пилотов, проценты)
             continue
-        scale = 1e6 if suffix in ("млн", "million", "mln") else 1e3 if suffix in ("тыс", "thousand", "k") else 1.0
+        scale = (1e9 if suffix.startswith(("млрд", "миллиард", "billion", "bn")) else
+                 1e6 if suffix.startswith(("млн", "миллион", "million", "mln")) else
+                 1e3 if suffix.startswith(("тыс", "thousand", "k")) else 1.0)
         compact = re.sub(r"[\s  ]", "", raw)
         decimals = len(re.search(r"[.,](\d+)$", compact).group(1)) if re.fullmatch(r"\d+[.,]\d{1,2}", compact) else 0
         tolerance = 0.5 * 10 ** (-decimals) * scale + 1e-6
