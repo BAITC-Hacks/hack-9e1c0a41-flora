@@ -327,12 +327,23 @@ def display_table(data, **kwargs):
                 data[column] = data[column].map(agent_text)
     original = kwargs.pop("column_config", {})
     config = {}
+    styled = data.style if isinstance(data, pd.DataFrame) else data
     for name in frame.columns:
         config[name] = dict(original.get(name) or {})
         config[name]["label"] = t(config[name].get("label") or name)
         if config[name].get("help"):
             config[name]["help"] = t(config[name]["help"])
-    st.dataframe(data, column_config=config, **kwargs)
+        if pd.api.types.is_numeric_dtype(frame[name]) and not pd.api.types.is_bool_dtype(frame[name]):
+            number_config = dict(config[name].get("type_config") or {})
+            number_format = number_config.pop("format", None) or ""
+            precision_match = re.search(r"\.(\d+)f", number_format)
+            precision = int(precision_match[1]) if precision_match else (0 if pd.api.types.is_integer_dtype(frame[name]) or number_format.endswith("d") else 2)
+            formatter = "{:" + ("+" if "+" in number_format else "") + ",." + str(precision) + "f}"
+            styled = styled.format(formatter, subset=[name], thousands=" ",
+                                   decimal="." if language() == "en" else ",", na_rep="—")
+            # Column format overrides Styler display values; retain numeric data for sorting.
+            config[name]["type_config"] = number_config
+    st.dataframe(styled, column_config=config, **kwargs)
 
 
 def metric_strip(pair):
@@ -409,7 +420,7 @@ def overview(pair):
     comparison = pd.DataFrame([result_row(pair["flora"]), result_row(pair["template"])])
     display_table(comparison.drop(columns="Ошибка") if not comparison["Ошибка"].any() else comparison,
                  hide_index=True, width="stretch", column_config={
-                     "Чистый результат": st.column_config.NumberColumn(format="%.0f", help="Условные единицы симулятора, не евро и не тенге."),
+                     "Чистый результат": st.column_config.NumberColumn(format="%+.0f", help="Условные единицы симулятора, не евро и не тенге."),
                      "Затраты": st.column_config.NumberColumn(format="%.0f", help="Условные единицы симулятора."),
                      "Время, с": st.column_config.NumberColumn(format="%.2f")})
     st.caption(t("Мок-модель. Результат включает пилоты, стоимость контактов и дедупликацию. Это не прогноз прибыли Beeline."))
@@ -478,27 +489,39 @@ def plan_view(pair):
         return [f"background-color: {CHANNEL_COLORS.get(v, ('#f1f3f4', '#333'))[0]}; "
                 f"color: {CHANNEL_COLORS.get(v, ('#f1f3f4', '#333'))[1]}; font-weight: 600" for v in column]
     rendered = table.copy()
+    campaign_labels = {}
+    for _, row in table.iterrows():
+        try:
+            segment = campaign_filters(row["filters"])["filter_arpu_segment"]
+        except (KeyError, ValueError):
+            segment = t("Сегмент не указан")
+        campaign_labels[row["campaign_name"]] = f"{segment} · {row['target_tariff']} · {row['channel']}"
+    rendered["campaign_name"] = rendered["campaign_name"].map(campaign_labels)
     if "reason" in rendered:
         rendered["reason"] = rendered["reason"].map(agent_text)
     styled = rendered.style
     if "channel" in table:
         styled = styled.apply(channel_style, subset=["channel"])
-    display_table(styled, hide_index=True, width="stretch", column_config={
+    display_table(styled, hide_index=True, width="stretch",
+                  column_order=["campaign_name", "n_customers", "expected_net", "lower_bound", "channel", "target_tariff", "filters", "reason"],
+                  column_config={
         "campaign_name": st.column_config.TextColumn(t("Кампания")),
         "filters": st.column_config.TextColumn(t("Сегмент"), width="large"),
         "target_tariff": st.column_config.TextColumn(t("Предложение")),
         "channel": st.column_config.TextColumn(t("Канал")),
         "n_customers": st.column_config.NumberColumn(t("Абонентов"), format="%d"),
-        "expected_net": st.column_config.NumberColumn(t("Ожидаемый net"), format="%.0f"),
+        "expected_net": st.column_config.NumberColumn(t("Ожидаемый чистый прирост"), format="%.0f"),
         "lower_bound": st.column_config.NumberColumn(t("Нижняя оценка"), format="%.0f"),
         "reason": st.column_config.TextColumn(t("Обоснование"), width="large")})
     if {"campaign_name", "reason"}.issubset(table.columns):
-        chosen = st.selectbox(t("Кампания"), table["campaign_name"].tolist(), key="selected_campaign")
+        chosen = st.selectbox(t("Кампания"), table["campaign_name"].tolist(),
+                              format_func=campaign_labels.get, key="selected_campaign")
+        st.caption(t("Технический ID: {name}", name=chosen))
         st.write(agent_text(table.loc[table["campaign_name"] == chosen, "reason"].iloc[0]))
         portrait_view(pair["flora"].get("portraits", {}).get(chosen))
     st.download_button(t("План"), table.to_csv(index=False).encode("utf-8-sig"),
                        file_name=f"flora_plan_seed_{pair['seed']}.csv", mime="text/csv", icon=":material/download:")
-    st.caption(t("Ожидаемый net и нижняя оценка взяты из модели агента. Фактический результат скорера показан в разделе «Результат»."))
+    st.caption(t("Ожидаемый чистый прирост и нижняя оценка взяты из модели агента. Фактический результат скорера показан в разделе «Результат»."))
 
 
 def portrait_view(portrait):
@@ -698,7 +721,7 @@ def assistant_view(pair):
 
 
 STYLES = """<style>
-    :root { --ink: #252823; --muted: #70776e; --pink: #f9e8ef; --green: #397157; --yellow: #ffdc32; }
+    :root { --ink: #252823; --muted: #53605a; --pink: #f9e8ef; --green: #397157; --yellow: #ffdc32; }
     .stApp { background: #f7f8f5; color: var(--ink); }
     [data-testid="stHeader"] { background: transparent; pointer-events: none; }
     [data-testid="stHeader"] div { pointer-events: none !important; }
@@ -710,7 +733,9 @@ STYLES = """<style>
     h1 { font-size: 27px !important; font-weight: 650 !important; color: var(--ink); padding: 0 0 .3rem !important; }
     h2, h3 { font-size: 18px !important; font-weight: 650 !important; color: var(--ink); }
     p { line-height: 1.55; }
-    [data-testid="stCaptionContainer"] { color: var(--muted); }
+    [data-testid="stCaptionContainer"], [data-testid="stCaptionContainer"] p { color: var(--muted) !important; }
+    [data-testid="stMain"] [data-testid="stWidgetLabel"] p { color: var(--ink) !important; font-weight: 600; }
+    [data-testid="stNumberInput"] label { opacity: 1 !important; }
     [data-testid="stSidebar"] { background: #242823; border-right: 0; }
     [data-testid="stSidebar"][aria-expanded="true"] { min-width: 245px !important; max-width: 245px !important; }
     .stApp:has([data-testid="stSidebar"][aria-expanded="false"]) .st-key-top_bar { padding-left: 36px; }
@@ -742,8 +767,8 @@ STYLES = """<style>
     .breadcrumb { color: #737c6d; }
     .breadcrumb b { color: #343b30; font-weight: 600; }
     .local-status { color: #397157; background: #e8eee3; padding: 4px 9px; border-radius: 4px; font-size: 11px; }
-    .eyebrow { color: #888375; font-size: 10px; font-weight: 650; }
-    .section-kicker { color: #74816c; font-size: 11px; margin-bottom: 5px; }
+    .eyebrow { color: #61685e; font-size: 10px; font-weight: 650; }
+    .section-kicker { color: #53634d; font-size: 11px; margin-bottom: 5px; }
     .mobile-brand { display: none; font: italic 27px Georgia, serif; color: #57754a; }
     .stButton > button, .stDownloadButton > button { border-radius: 6px; min-height: 41px; font-weight: 600; border-color: #d7ded2; }
     .stButton > button[kind="primary"] { background: #ffdc32; color: #252823; border-color: #ffdc32; }
@@ -770,9 +795,9 @@ STYLES = """<style>
     .metric-tile.net .metric-label { color: #687160; }
     .metric-value { font-size: 27px; font-weight: 650; line-height: 1.3; font-variant-numeric: tabular-nums; white-space: nowrap; }
     .metric-tile.net .metric-value { color: #24282c; font-size: 32px; }
-    .metric-detail { font-size: 11px; color: #7c8574; margin-top: 9px; }
+    .metric-detail { font-size: 11px; color: #56634f; margin-top: 9px; }
     .metric-tile.net .metric-detail { color: #52655c; }
-    .problem-line { color: #707768; font-size: 13px; margin: 7px 0 19px; }
+    .problem-line { color: #53604c; font-size: 13px; margin: 7px 0 19px; }
     .resource { margin: 18px 0 20px; }
     .resource-label { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 5px; font-size: 14px; margin-bottom: 9px; }
     .resource-label strong { font-weight: 600; font-variant-numeric: tabular-nums; }
@@ -791,7 +816,7 @@ STYLES = """<style>
     [data-testid="stMetricLabel"] { white-space: normal; }
     [data-testid="stAlert"] { border-radius: 6px; }
     hr { border-color: #dde3d6 !important; margin: 1.3rem 0 !important; }
-    .footer-note { border-top: 1px solid #dce3d5; margin-top: 30px; padding-top: 13px; color: #89917f; font-size: 10px; }
+    .footer-note { border-top: 1px solid #dce3d5; margin-top: 30px; padding-top: 13px; color: #58634f; font-size: 10px; }
     .st-key-display_controls { max-width: 186px; margin-left: auto; }
     .st-key-display_controls [data-testid="stHorizontalBlock"] { flex-wrap: nowrap; gap: 10px; align-items: center; }
     .st-key-display_controls [data-testid="stColumn"]:first-child { flex: 1 1 0 !important; min-width: 0; }
@@ -866,7 +891,7 @@ def apply_theme(theme):
         data = base64.b64encode(asset.read_bytes()).decode("ascii")
         background = f'background-image: url("data:image/png;base64,{data}");'
     st.html("""<style>
-        :root { --ink: #4c4c48; --muted: #766371; }
+        :root { --ink: #4c4c48; --muted: #674e5e; }
         .stApp { background: #fff8fb; }
         [data-testid="stMain"] { BACKGROUND_IMAGE background-size: 100% auto; background-repeat: no-repeat; background-position: center 30px; }
         .block-container { background: #fff8fbd9; }
@@ -890,7 +915,7 @@ def apply_theme(theme):
         .breadcrumb { color: #826b79; }
         .breadcrumb b { color: #8c617a; }
         .local-status { background: #edf1e8; color: #697c5d; }
-        .section-kicker { color: #866778; }
+        .section-kicker { color: #6b4b5c; }
         h1 { color: #76566a; font-family: Georgia, 'Times New Roman', serif !important; font-weight: 500 !important; }
         h2, h3 { color: #715969; }
         .mobile-brand { color: #98647e; }
@@ -910,18 +935,18 @@ def apply_theme(theme):
         .metric-tile.net .metric-label, .metric-tile.net .metric-detail { color: #744d61; }
         .metric-tile.pink { background: #fbeaf2; border-color: #f2dce7; }
         .metric-tile.green { background: #eff4e9; border-color: #e0ead6; }
-        .metric-label { color: #806b77; }
-        .metric-detail { color: #806b77; }
+        .metric-label { color: #674e5e; }
+        .metric-detail { color: #674e5e; }
         .metric-value { color: #705d68; font-weight: 550; }
         .metric-tile.green .metric-value { color: #6d8560; }
-        .problem-line { color: #806b77; }
+        .problem-line { color: #674e5e; }
         .resource-label { color: #594552; }
         .resource-label small, .resource-percent { color: #75606c; }
         .resource-track { background: #e7dce2; }
         .empty-state { border-color: #ecdae3; }
         .empty-state p { color: #806b77; }
         hr { border-color: #eedce5 !important; }
-        .footer-note { color: #806b77; }
+        .footer-note { color: #674e5e; }
         @media (max-width: 700px) {
             [data-testid="stMain"] { background-size: 100% auto; background-repeat: repeat-y; }
             .block-container { background: #fff8fbe6; }

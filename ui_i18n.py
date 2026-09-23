@@ -8,6 +8,10 @@ LANGUAGES = {"ru": "Русский", "kk": "Қазақша", "en": "English"}
 
 # Russian source text, English, Kazakh. Placeholders are identical across locales.
 TEXT = {
+    "Ожидаемый чистый прирост": ("Expected net gain", "Күтілетін таза өсім"),
+    "Сегмент не указан": ("Segment unspecified", "Сегмент көрсетілмеген"),
+    "Технический ID: {name}": ("Technical ID: {name}", "Техникалық ID: {name}"),
+    "Ожидаемый чистый прирост и нижняя оценка взяты из модели агента. Фактический результат скорера показан в разделе «Результат».": ("Expected net gain and the lower estimate come from the agent model. The actual scored result is shown under Results.", "Күтілетін таза өсім мен төменгі баға агент моделінен алынған. Нақты бағалау нәтижесі «Нәтиже» бөлімінде көрсетілген."),
     "{n} абонентов · бюджет {budget} · до {campaigns} кампаний": ("{n} subscribers · {budget} budget · up to {campaigns} campaigns", "{n} абонент · бюджет {budget} · {campaigns} науқанға дейін"),
     "Модель": ("Model", "Модель"),
     "Обучение": ("Learning", "Үйрену"),
