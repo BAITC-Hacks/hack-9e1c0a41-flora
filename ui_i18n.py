@@ -216,6 +216,30 @@ TEXT.update({
     "Реалистичный стенд · миры, слабо связанные с историей": (
         "Realistic bench · worlds weakly related to history", "Шынайы стенд · тарихпен әлсіз байланысқан әлемдер"),
     "оригинал на русском": ("original in Russian", "түпнұсқа орыс тілінде"),
+    'Свернуть чат': ('Minimise chat', 'Чатты жию'),
+    'Спросить AI': ('Ask AI', 'AI-дан сұрау'),
+    'Вопросы о плане кампаний, пилотах и решениях агента': ('Questions about the campaign plan, pilots and agent decisions', 'Науқандар жоспары, пилоттар және агент шешімдері туралы сұрақтар'),
+    'Локально · AI-ассистент через OpenAI': ('Local · AI assistant via OpenAI', 'Жергілікті · OpenAI арқылы AI-көмекші'),
+    'Режим: OpenAI с проверкой ответа по данным плана': ('Mode: OpenAI with answers checked against plan data', 'Режим: жауабы жоспар деректерімен тексерілетін OpenAI'),
+    'Сначала нажмите «Рассчитать кампании» — ассистент отвечает по данным рассчитанного плана.': ('First press «Calculate campaigns» — the assistant answers from the calculated plan.', 'Алдымен «Науқандарды есептеу» басыңыз — көмекші есептелген жоспар деректері бойынша жауап береді.'),
+    'Например: почему отклонена гипотеза, зачем этот канал?': ('For example: why was a hypothesis rejected, why this channel?', 'Мысалы: гипотеза неге қабылданбады, неге бұл арна?'),
+    'Ассистент отвечает только по плану кейса 04: пилоты, кампании, каналы, ограничения.': ('The assistant answers only about the case 04 plan: pilots, campaigns, channels, limits.', 'Көмекші тек 04 кейсінің жоспары бойынша жауап береді: пилоттар, науқандар, арналар, шектеулер.'),
+    'Очистить диалог': ('Clear chat', 'Диалогты тазалау'),
+    'Агент оптимизирует чистый прирост ARPU оператора минус стоимость контактов. Выгода, удовлетворённость и отток абонентов в модели и данных кейса не учитываются, поэтому по этому плану нельзя утверждать, выгоден ли переход самому абоненту. Переходы, которые пилоты показали как снижение выручки (downsell), агент отклоняет — это защита выручки, а не оценка пользы для абонента. Учёт выгоды абонента — направление развития (см. README).': ("The agent optimises the operator's net ARPU gain minus contact costs. Subscriber benefit, satisfaction and churn are not part of the model or the case data, so this plan cannot tell whether a switch benefits the subscriber. Switches that pilots showed as revenue-reducing (downsell) are rejected — this protects revenue, it is not an assessment of subscriber benefit. Accounting for subscriber benefit is a development direction (see README).", 'Агент оператордың ARPU таза өсімін байланыс шығынын шегергенде оңтайландырады. Абоненттің пайдасы, қанағаттануы және кетуі модельде және кейс деректерінде ескерілмейді, сондықтан бұл жоспар бойынша ауысудың абонентке тиімді екенін айтуға болмайды. Пилоттар табысты азайтатынын көрсеткен ауысуларды (downsell) агент қабылдамайды — бұл табысты қорғау, абоненттің пайдасын бағалау емес. Абонент пайдасын ескеру — даму бағыты (README қараңыз).'),
+    "Факт о модели агента": ("Fact about the agent model", "Агент моделі туралы факт"),
+    "Ассистент отвечает только на вопросы о плане кампаний, пилотах, решениях агента и ограничениях кейса 04.": (
+        "The assistant only answers questions about the campaign plan, pilots, agent decisions and limits of case 04.",
+        "Көмекші тек науқандар жоспары, пилоттар, агент шешімдері және 04 кейсінің шектеулері туралы сұрақтарға жауап береді."),
+    "Ответ LLM отклонён: в нём есть числа, которых нет в данных плана ({numbers}). Показано локальное объяснение.": (
+        "LLM answer rejected: it contains numbers not present in the plan data ({numbers}). Local explanation shown.",
+        "LLM жауабы қабылданбады: онда жоспар деректерінде жоқ сандар бар ({numbers}). Жергілікті түсіндірме көрсетілді."),
+    "В данных плана нет ответа на этот вопрос.": ("The plan data does not contain an answer to this question.",
+                                                  "Жоспар деректерінде бұл сұраққа жауап жоқ."),
+    "Локальный режим не анализирует вопрос: показано общее объяснение плана. Для ответа на вопрос нужен OPENAI_API_KEY и включённый переключатель «LLM · OpenAI».": (
+        "Local mode does not analyse the question: the general plan explanation is shown. "
+        "To answer the question, set OPENAI_API_KEY and turn on «LLM · OpenAI».",
+        "Жергілікті режим сұрақты талдамайды: жоспардың жалпы түсіндірмесі көрсетілді. "
+        "Сұраққа жауап алу үшін OPENAI_API_KEY және «LLM · OpenAI» қосқышы керек."),
 })
 
 
