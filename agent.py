@@ -52,7 +52,7 @@ class Agent:
     def __init__(self, history_path="data/change_tariff.csv", pilot_size=200,
                  z_safe=0.5, z_unpiloted=1.0, max_targets_per_cell=6,
                  beta_prior_sd=(0.03, 0.5), residual=(0.02, 0.3), stop_rule="full", min_kg=1.0,
-                 scale_grid=None, verify=True, residual_feature="conv", push_leftover=True):
+                 scale_grid=None, verify=True, residual_feature="conv", push_leftover=True, planner="milp"):
         self.history_path = history_path
         self.pilot_size = pilot_size
         self.z_safe = z_safe                    # осторожность для проверенных пилотом связок
@@ -67,6 +67,7 @@ class Agent:
         self.scale_grid = scale_grid or [(1.0, 1.0)] + [(sa, sb) for sa in (1.0, 2.0, 3.0, 5.0, 8.0)
                                                         for sb in (0.5, 1.0, 2.0, 4.0, 6.0) if (sa, sb) != (1.0, 1.0)]
         self.residual_feature = residual_feature  # от чего зависит разброс переноса: "conv" или "m0"
+        self.planner = planner                  # "milp" — точный отбор целых ячеек; "greedy" — жадный
         self.push_leftover = push_leftover      # остаток контактов — в бесплатный push по средней оценке
         self.verify = verify                    # остаток пилотов — на проверку крупнейших ставок плана
         self.scale_ = (1.0, 1.0)
@@ -290,11 +291,57 @@ class Agent:
         opt = pd.concat(rows, ignore_index=True)
         return opt[opt["v_low"] > 0]
 
+    def _select_milp(self, opts, contacts_left, money_left, slots):
+        """Точный выбор: по одной опции (связка, канал) на ячейку, ячейка берётся целиком.
+        Ограничения: контакты, бюджет, ≤ slots кампаний (кампания = сегмент ARPU × тариф × канал,
+        до 5 000 абонентов). Цель — сумма ожидаемой ценности. Возвращает строки opts."""
+        from scipy.optimize import Bounds, LinearConstraint, milp
+        from scipy.sparse import csr_matrix, hstack, vstack
+
+        opts = opts[(opts["n_use"] <= contacts_left)
+                    & (opts["unit_cost"] * opts["n_use"] <= money_left)].reset_index(drop=True)
+        if opts.empty or slots <= 0:
+            return opts.iloc[0:0]
+        n_o = opts["n_use"].to_numpy(dtype=float)
+        val = opts["objective"].to_numpy(dtype=float) * n_o
+        cell_id = opts["cell"].astype("category").cat.codes.to_numpy().astype(np.int64)
+        grp = (opts["arpu_segment"] + "|" + opts["target_tariff"] + "|" + opts["channel"]).astype("category")
+        grp_id = grp.cat.codes.to_numpy().astype(np.int64)
+        n_opt, n_cell, n_grp = len(opts), int(cell_id.max()) + 1, int(grp_id.max()) + 1
+        rows = np.arange(n_opt)
+        per_cell = hstack([csr_matrix((np.ones(n_opt), (cell_id, rows)), shape=(n_cell, n_opt)),
+                           csr_matrix((n_cell, n_grp))])
+        budget = hstack([csr_matrix(np.vstack([n_o, opts["unit_cost"].to_numpy() * n_o])),
+                         csr_matrix((2, n_grp))])
+        capacity = hstack([csr_matrix((n_o, (grp_id, rows)), shape=(n_grp, n_opt)),
+                           csr_matrix(-MAX_CUSTOMERS_PER_CAMPAIGN * np.eye(n_grp))])
+        campaigns = hstack([csr_matrix((1, n_opt)), csr_matrix(np.ones((1, n_grp)))])
+        a = vstack([per_cell, budget, capacity, campaigns]).tocsr()
+        ub = np.r_[np.ones(n_cell), contacts_left, money_left, np.zeros(n_grp), slots]
+        cons = LinearConstraint(a, -np.inf, ub)
+        c = np.r_[-val, np.zeros(n_grp)]
+        bounds = Bounds(np.zeros(n_opt + n_grp), np.r_[np.ones(n_opt), np.full(n_grp, slots)])
+        res = milp(c, constraints=cons, integrality=np.ones(n_opt + n_grp), bounds=bounds,
+                   options={"time_limit": 60, "disp": False})
+        if res.x is None:
+            return None
+        return opts[res.x[:n_opt] > 0.5]
+
     def _plan(self, env, cand, mu, cov):
         sd = np.sqrt(np.clip(np.diag(cov), 0.0, None))
         opts = self._options(env, cand, mu, sd)
         contacts_left = int(env.remaining_contacts)
         money_left = float(env.remaining_budget)
+
+        if self.planner == "milp":
+            try:
+                chosen = self._plan_milp(env, cand, mu, sd, opts, contacts_left, money_left)
+            except Exception as e:                   # страховка: агент не должен падать из-за солвера
+                chosen = None
+                self._log("decision", f"Ошибка оптимизатора ({type(e).__name__}) — используем жадный отбор.")
+            if chosen is not None:
+                return self._pack_and_report(env, cand, mu, sd, chosen)
+            self._log("decision", "Оптимизатор не нашёл решения — используем жадный отбор.")
 
         # 1) по ячейке: лучшая связка по нижней ценности через дешёвые каналы (push/sms)
         cheap = opts[opts["channel"].isin(["push", "sms"])]
@@ -344,12 +391,42 @@ class Agent:
                 take = int(min(r["n_use"], contacts_left))
                 if take <= 0:
                     break
+                z_r = self.z_safe if r["n_obs"] > 0 else self.z_unpiloted
                 d = dict(r, take=take, channel="push", unit_cost=0.0,
-                         v_low=s_push * (r["mean"] - self.z_safe * r["sd"]) * r["arpu_mean"],
-                         low=r["mean"] - self.z_safe * r["sd"])
+                         v_low=s_push * (r["mean"] - z_r * r["sd"]) * r["arpu_mean"],
+                         low=r["mean"] - z_r * r["sd"])
                 chosen.append(d)
                 contacts_left -= take
 
+        return self._pack_and_report(env, cand, mu, sd, chosen)
+
+    def _plan_milp(self, env, cand, mu, sd, opts, contacts_left, money_left):
+        """Два этапа: (1) связки, у которых нижняя граница окупает контакт; (2) остаток контактов
+        и слотов — бесплатный push по положительной средней оценке."""
+        opts = opts.assign(objective=opts["v_mean"])
+        sel1 = self._select_milp(opts, contacts_left, money_left, MAX_CAMPAIGNS)
+        if sel1 is None:
+            return None
+        chosen = [dict(r, take=int(r["n_use"])) for _, r in sel1.iterrows()]
+        used_contacts = sum(r["take"] for r in chosen)
+        used_money = sum(r["take"] * r["unit_cost"] for r in chosen)
+        slots_used = len({(r["arpu_segment"], r["target_tariff"], r["channel"]) for r in chosen})
+        if self.push_leftover:
+            s_push = self._scale(env, "push")
+            z = np.where(cand["n_obs"].to_numpy() > 0, self.z_safe, self.z_unpiloted)
+            rest = cand.assign(mean=mu, sd=sd, low=mu - z * sd, channel="push", unit_cost=0.0)
+            rest = rest.assign(v_mean=s_push * rest["mean"] * rest["arpu_mean"],
+                               v_low=s_push * rest["low"] * rest["arpu_mean"])
+            taken = {r["cell"] for r in chosen}
+            rest = rest[(~rest["cell"].isin(taken)) & (rest["v_mean"] > 0)]
+            # push-группы, уже открытые на этапе 1, не занимают новый слот: разрешаем их с запасом
+            sel2 = self._select_milp(rest.assign(objective=rest["v_mean"]), contacts_left - used_contacts,
+                                     money_left - used_money, MAX_CAMPAIGNS - slots_used)
+            if sel2 is not None:
+                chosen += [dict(r, take=int(r["n_use"])) for _, r in sel2.iterrows()]
+        return chosen
+
+    def _pack_and_report(self, env, cand, mu, sd, chosen):
         # 3) журнал отказов по проверенным связкам
         chosen_keys = {(r["cell"], r["target_tariff"]) for r in chosen}
         tested = cand[cand["n_obs"] > 0]
@@ -368,15 +445,16 @@ class Agent:
             groups.setdefault((r["arpu_segment"], r["target_tariff"], r["channel"]), []).append(r)
         campaigns = []
         for key, items in groups.items():
-            chunk, size = [], 0
-            for r in items:
-                if chunk and size + r["take"] > MAX_CUSTOMERS_PER_CAMPAIGN:
-                    campaigns.append((key, chunk))
-                    chunk, size = [], 0
-                chunk.append(r)
-                size += r["take"]
-            if chunk:
-                campaigns.append((key, chunk))
+            bins = []                                   # first-fit decreasing: ≤ 5 000 абонентов в кампании
+            for r in sorted(items, key=lambda r: (-r["take"], r["cell"])):
+                for b in bins:
+                    if b[0] + r["take"] <= MAX_CUSTOMERS_PER_CAMPAIGN:
+                        b[0] += r["take"]
+                        b[1].append(r)
+                        break
+                else:
+                    bins.append([r["take"], [r]])
+            campaigns.extend((key, b[1]) for b in bins)
         campaigns.sort(key=lambda c: -sum(r["v_mean"] * r["take"] for r in c[1]))
         dropped = campaigns[MAX_CAMPAIGNS:]
         campaigns = campaigns[:MAX_CAMPAIGNS]
