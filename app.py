@@ -682,15 +682,23 @@ CASE_FACTS = {
 SUBSCRIBER_BENEFIT_ANSWER = (
     "Агент оптимизирует чистый прирост ARPU оператора минус стоимость контактов. Выгода, удовлетворённость "
     "и отток абонентов в модели и данных кейса не учитываются, поэтому по этому плану нельзя утверждать, "
-    "выгоден ли переход самому абоненту. Переходы, которые пилоты показали как снижение выручки (downsell), "
-    "агент отклоняет — это защита выручки, а не оценка пользы для абонента. Учёт выгоды абонента — "
+    "выгоден ли переход самому абоненту. Агент не включает в основной план связки, у которых нижняя граница "
+    "оценки эффекта не окупает контакт; это снижает риск падения выручки (downsell), но не исключает его: "
+    "пилоты шумные, а часть связок оценена только через калибровку. Учёт выгоды абонента — "
     "направление развития (см. README).")
-_SUBSCRIBER_WORDS = re.compile(r"абонент|клиент|пользовател|subscriber|customer|client|user", re.I)
-_BENEFIT_WORDS = re.compile(r"выгод|польз|зачем|нужн|интерес|удобн|лучше|benefit|value|why|gain|useful|пайда|тиімді|не үшін", re.I)
+_SUBSCRIBER_BENEFIT = re.compile(
+    r"(выгод\w*|польз\w*|зачем|нужн\w*)\W+(\w+\W+){0,3}(абонент|клиент|пользовател)"
+    r"|(абонент|клиент|пользовател)\w*\W+(\w+\W+){0,3}(выгод|польз)"
+    r"|benefit\w*\W+(\w+\W+){0,3}(customer|subscriber|client|user)"
+    r"|(customer|subscriber|client|user)s?\W+(\w+\W+){0,2}benefit"
+    r"|абонент\w*\W+(\w+\W+){0,2}(пайда|тиімді)", re.I)
+_CHANNEL_WORDS = re.compile(r"канал|sms|смс|push|пуш|digital|реклам|звон|call|channel|арна", re.I)
 
 
 def about_subscriber_benefit(question):
-    return bool(_SUBSCRIBER_WORDS.search(question or "") and _BENEFIT_WORDS.search(question or ""))
+    """Вопрос именно о выгоде абонента (не о выборе канала или кампании)."""
+    q = question or ""
+    return bool(_SUBSCRIBER_BENEFIT.search(q)) and not _CHANNEL_WORDS.search(q)
 
 
 def _parse_number(token):
@@ -707,18 +715,24 @@ def _parse_number(token):
 
 def unsupported_numbers(text, context):
     """Числа из ответа, которых нет в переданных данных (защита от выдуманных чисел).
-    Допускается округление до 1 % и запись в тысячах или миллионах."""
+    Точность — по записи числа: «5 957 337» должно совпасть с данными до целого,
+    «5,96 млн» — с точностью до указанных знаков в миллионах."""
     source = json.dumps(context, ensure_ascii=False)
     known = [abs(float(x)) for x in re.findall(r"-?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?", source)]
     known = [k for k in known if k >= 1]
     unknown = []
-    for raw in re.findall(r"\d[\d\s  ]*(?:[.,]\d+)*", text):
-        value = _parse_number(raw.strip())
-        if value is None or value < 100:      # мелкие числа (10 кампаний, 20 пилотов, проценты) не проверяем
+    pattern = r"(\d[\d\s  ]*(?:[.,]\d+)*)\s*(млн|million|mln|тыс|thousand|k)?"
+    for match in re.finditer(pattern, text, re.I):
+        raw, suffix = match.group(1).strip(), (match.group(2) or "").lower()
+        value = _parse_number(raw)
+        if value is None or value < 100 and not suffix:   # мелкие числа (10 кампаний, 20 пилотов, проценты)
             continue
-        candidates = (value, value * 1e3, value * 1e6)
-        if not any(abs(k - c) <= 0.01 * k + 0.5 for k in known for c in candidates):
-            unknown.append(raw.strip())
+        scale = 1e6 if suffix in ("млн", "million", "mln") else 1e3 if suffix in ("тыс", "thousand", "k") else 1.0
+        compact = re.sub(r"[\s  ]", "", raw)
+        decimals = len(re.search(r"[.,](\d+)$", compact).group(1)) if re.fullmatch(r"\d+[.,]\d{1,2}", compact) else 0
+        tolerance = 0.5 * 10 ** (-decimals) * scale + 1e-6
+        if not any(abs(k - value * scale) <= tolerance for k in known):
+            unknown.append(raw + (f" {match.group(2)}" if suffix else ""))
     return unknown
 
 
@@ -739,10 +753,18 @@ def explain_plan(question, run, use_llm=False):
     try:
         # Only aggregates and decision notes leave the process; no profile rows or identifiers.
         result = run.get("result") or {}
+        # Числа округлены заранее, как в панели: модель копирует готовые значения, а не округляет сама.
+        def rounded(value):
+            if isinstance(value, float) and math.isfinite(value):
+                return int(round(value)) if abs(value) >= 100 else round(value, 3)
+            return value
+
         context = {
-            "metrics": {name: result.get(name) for name in ("net_arpu_gain", "total_cost", "total_contacts", "n_pilots")},
-            "plan": json.loads(run["plan"].head(10).to_json(orient="records", force_ascii=False)),
-            "trace": json.loads(pd.DataFrame(run.get("trace", [])).head(50).to_json(orient="records", force_ascii=False)),
+            "metrics": {name: rounded(result.get(name)) for name in ("net_arpu_gain", "total_cost", "total_contacts", "n_pilots")},
+            "plan": [{k: rounded(v) for k, v in row.items()} for row in
+                     json.loads(run["plan"].head(10).to_json(orient="records", force_ascii=False))],
+            "trace": [{k: rounded(v) for k, v in row.items()} for row in
+                      json.loads(pd.DataFrame(run.get("trace", [])).head(50).to_json(orient="records", force_ascii=False))],
             "explanation": fallback[:12000],
         }
         context["case_facts"] = CASE_FACTS
