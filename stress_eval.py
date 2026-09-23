@@ -68,6 +68,30 @@ def _scenarios(base: pd.DataFrame, rng_seed=2026):
     s["arpu_change_pct"] = (0.3 * s["arpu_change_pct"] + rng.normal(0.05, 0.6, len(s))).clip(-1, 3)
     out["слабая связь с историей"] = s
 
+    # Класс «история почти бесполезна»: по ТЗ стратегия без разведки даёт в ~15 раз меньше оракула,
+    # в наших сценариях так ведут себя именно модели, слабо связанные с историей.
+    s = base.copy()
+    s["arpu_change_pct"] = rng.normal(0.05, 0.8, len(s)).clip(-1, 3)
+    s["conversion_rate"] = rng.uniform(0.02, 0.5, len(s))
+    out["независимы и эффект, и конверсия"] = s
+
+    s = base.copy()
+    s["arpu_change_pct"] = (0.3 * rng.standard_t(3, len(s))).clip(-1, 3)
+    out["независимы, тяжёлые хвосты"] = s
+
+    s = base.copy()
+    s["arpu_change_pct"] = rng.normal(-0.15, 0.7, len(s)).clip(-1, 3)
+    out["независимы, в среднем убыточны"] = s
+
+    hist = pd.read_csv("data/change_tariff.csv")
+    for k in range(2):
+        boot = hist.sample(frac=1.0, replace=True, random_state=int(rng.integers(1 << 31)))
+        out[f"другая выборка истории #{k + 1}"] = _mock_impact_model(boot)
+    half = hist.sample(frac=0.5, random_state=int(rng.integers(1 << 31)))
+    shifted = half.copy()
+    shifted["AVG_ARPU_NEXT_3M"] = shifted["AVG_ARPU_NEXT_3M"] * rng.uniform(0.85, 1.05, len(shifted))
+    out["половина выборки + сдвиг поведения"] = _mock_impact_model(shifted)
+
     s = base.copy()
     s["conversion_rate"] = (s["conversion_rate"] * rng.uniform(0.3, 2.0, len(s))).clip(upper=1.0)
     out["конверсия ×0.3–2.0"] = s
@@ -103,20 +127,42 @@ def run_once(agent_factory, impact_model, seed, profile, dict_tariff):
             "sec": elapsed, "crashed": crashed}
 
 
-def optimum(impact_model, profile, dict_tariff):
-    """Грубая верхняя оценка: лучший SMS-эффект по каждой ячейке, если бы эффекты были известны."""
+def oracle(impact_model, profile, dict_tariff):
+    """Верхняя оценка: план, знающий истинные эффекты (все целевые тарифы, каналы кроме пилотов,
+    лимиты контактов/бюджета/размера кампании; лимит 10 кампаний не учитывается)."""
     cells = profile.groupby(["current_tariff", "arpu_segment"]).agg(
         n=("ID_NUMBER", "size"), a=("predicted_arpu", "mean")).reset_index()
-    m = impact_model.copy()
-    m["r"] = m["arpu_change_pct"] * (m["conversion_rate"] * CHANNELS["sms"]["conversion_multiplier"]).clip(upper=1)
-    best = m.groupby(["tariff_plan_code_from", "arpu_segment"], observed=True)["r"].max().reset_index()
-    x = cells.merge(best, left_on=["current_tariff", "arpu_segment"],
-                    right_on=["tariff_plan_code_from", "arpu_segment"])
-    x["v"] = (x["r"] * x["a"] - CHANNELS["sms"]["cost_per_contact"]).clip(lower=0)
-    x = x[x["v"] > 0].sort_values("v", ascending=False)
-    x["n_use"] = x["n"].clip(upper=5000)
-    x = x[x["n_use"].cumsum() <= MAX_TOTAL_CONTACTS]
-    return float((x["v"] * x["n_use"]).sum())
+    fb_conv = impact_model["conversion_rate"].median()
+    rows = []
+    for c in cells.itertuples():
+        for t in dict_tariff["tariff_plan_code"]:
+            hit = impact_model[(impact_model["tariff_plan_code_from"] == c.current_tariff)
+                               & (impact_model["tariff_plan_code_to"] == t)
+                               & (impact_model["arpu_segment"] == c.arpu_segment)]
+            if len(hit):
+                pct, conv = float(hit["arpu_change_pct"].iloc[0]), float(hit["conversion_rate"].iloc[0])
+            else:
+                pct, conv = _mock_fallback(c.current_tariff, t, c.arpu_segment, dict_tariff, fb_conv)
+            for ch, p in CHANNELS.items():
+                r = pct * min(conv * p["conversion_multiplier"], 1.0)
+                rows.append((c.current_tariff, c.arpu_segment, t, ch, r * c.a - p["cost_per_contact"],
+                             p["cost_per_contact"], min(c.n, 5000)))
+    df = pd.DataFrame(rows, columns=["cur", "seg", "to", "ch", "v", "cost", "n"])
+    df = df[df["v"] > 0].reset_index(drop=True)
+    if df.empty:
+        return 0.0
+    # ЛП-релаксация: сколько абонентов каждой ячейки отдать под (тариф, канал);
+    # ограничения — размер ячейки, общий охват и бюджет. Это честная верхняя граница.
+    from scipy.optimize import linprog
+    from scipy.sparse import csr_matrix, vstack
+    cell_id = (df["cur"] + "|" + df["seg"]).astype("category").cat.codes.to_numpy()
+    n_cells = cell_id.max() + 1
+    a_cells = csr_matrix((np.ones(len(df)), (cell_id, np.arange(len(df)))), shape=(n_cells, len(df)))
+    a_ub = vstack([a_cells, csr_matrix(np.ones((1, len(df)))), csr_matrix(df["cost"].to_numpy()[None, :])])
+    cap = df.groupby(cell_id)["n"].first().to_numpy()
+    b_ub = np.r_[cap, MAX_TOTAL_CONTACTS, TOTAL_BUDGET]
+    res = linprog(-df["v"].to_numpy(), A_ub=a_ub, b_ub=b_ub, bounds=(0, None), method="highs")
+    return float(-res.fun) if res.success else float("nan")
 
 
 def main():
@@ -137,21 +183,26 @@ def main():
 
     rows = []
     for name, model in _scenarios(base).items():
-        opt = optimum(model, profile, dict_tariff)
+        opt = oracle(model, profile, dict_tariff)
         for label, factory in agents.items():
             for seed in range(args.seeds):
                 r = run_once(factory, model, seed, profile, dict_tariff)
-                rows.append({"scenario": name, "agent": label, "seed": seed, "optimum_sms": opt, **r})
+                rows.append({"scenario": name, "agent": label, "seed": seed, "oracle": opt, **r})
 
     df = pd.DataFrame(rows)
     summary = (df.groupby(["scenario", "agent"], sort=False)
                .agg(median=("net", "median"), min=("net", "min"), max=("net", "max"),
                     positive=("net", lambda s: f"{(s > 0).sum()}/{len(s)}"),
-                    optimum=("optimum_sms", "first"), pilots=("n_pilots", "mean"),
+                    oracle=("oracle", "first"), pilots=("n_pilots", "mean"),
                     final=("n_final", "mean"), sec=("sec", "max"), crashed=("crashed", "sum")))
     pd.set_option("display.width", 200)
     print(summary.to_string(float_format=lambda v: f"{v:,.0f}"))
+    df["eff"] = df["net"] / df["oracle"]
+    eff = df[df["agent"] == "agent"].groupby("scenario", sort=False)["eff"].median()
+    print("\nЭффективность агента (медиана по seed, доля от оракула):")
+    print(eff.map(lambda v: f"{v:.0%}").to_string())
     agent_rows = df[df["agent"] == "agent"]
+    print(f"Медиана эффективности по сценариям: {eff.median():.0%}")
     print(f"\nИтог агента: медиана по всем сценариям {agent_rows['net'].median():,.0f}; "
           f"в плюсе {(agent_rows['net'] > 0).sum()}/{len(agent_rows)}; "
           f"худший {agent_rows['net'].min():,.0f}; макс. время {agent_rows['sec'].max():.1f} с")

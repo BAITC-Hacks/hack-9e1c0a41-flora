@@ -27,6 +27,8 @@
     agent.explanation — шаблонное текстовое объяснение (str).
 """
 
+import os
+
 import numpy as np
 import pandas as pd
 
@@ -48,9 +50,9 @@ _GH_W = _GH_W / _GH_W.sum()
 
 class Agent:
     def __init__(self, history_path="data/change_tariff.csv", pilot_size=200,
-                 z_safe=1.0, z_unpiloted=1.5, max_targets_per_cell=6,
+                 z_safe=0.5, z_unpiloted=1.0, max_targets_per_cell=6,
                  beta_prior_sd=(0.03, 0.5), residual=(0.02, 0.3), stop_rule="full", min_kg=1.0,
-                 scale_grid=(1.0, 1.5, 2.0, 3.0, 4.0, 6.0), verify=True):
+                 scale_grid=None, verify=True, residual_feature="conv", push_leftover=True):
         self.history_path = history_path
         self.pilot_size = pilot_size
         self.z_safe = z_safe                    # осторожность для проверенных пилотом связок
@@ -60,9 +62,14 @@ class Agent:
         self.residual = residual                # индивидуальное отклонение связки: a + b·|m0|
         self.stop_rule = stop_rule              # "full" — тратить пилоты, пока они информативны; "kg" — строгий KG
         self.min_kg = min_kg
-        self.scale_grid = scale_grid            # кандидаты масштаба отклонений для эмпирического Байеса
+        # кандидаты масштаба (постоянная часть, пропорциональная часть) для эмпирического Байеса;
+        # первый элемент — априорный выбор до пилотов
+        self.scale_grid = scale_grid or [(1.0, 1.0)] + [(sa, sb) for sa in (1.0, 2.0, 3.0, 5.0, 8.0)
+                                                        for sb in (0.5, 1.0, 2.0, 4.0, 6.0) if (sa, sb) != (1.0, 1.0)]
+        self.residual_feature = residual_feature  # от чего зависит разброс переноса: "conv" или "m0"
+        self.push_leftover = push_leftover      # остаток контактов — в бесплатный push по средней оценке
         self.verify = verify                    # остаток пилотов — на проверку крупнейших ставок плана
-        self.scale_ = 1.0
+        self.scale_ = (1.0, 1.0)
         self.trace, self.plan_table, self.explanation = [], None, None
 
     # ------------------------------------------------------------------ utils
@@ -81,9 +88,16 @@ class Agent:
     # ------------------------------------------------------------------ prior
     def _prior(self, env):
         """Априорная оценка эффекта (в единицах SMS) по истории смен тарифов."""
-        try:
-            hist = pd.read_csv(self.history_path)
-        except (OSError, ValueError):
+        hist = None
+        here = os.path.dirname(os.path.abspath(__file__))
+        for path in (os.path.join(here, self.history_path), self.history_path):
+            try:
+                hist = pd.read_csv(path)
+                self.history_used_ = path
+                break
+            except (OSError, ValueError):
+                continue
+        if hist is None:
             return None
         hist = hist[hist["AVG_ARPU_PREV_3M"] >= 100].copy()
         hist["arpu_segment"] = pd.cut(hist["AVG_ARPU_PREV_3M"], bins=ARPU_BINS, labels=ARPU_LABELS).astype(str)
@@ -96,9 +110,10 @@ class Agent:
         g["m0"] = g["pct_mean"] * conv
         pct_sd = g["pct_sd"].fillna(g["pct_sd"].median())
         g["se_hist"] = conv * pct_sd / np.sqrt(g["n_hist"])
+        g["conv"] = conv
         return g.rename(columns={"tariff_plan_code_from": "current_tariff",
                                  "tariff_plan_code_to": "target_tariff"})[
-            ["current_tariff", "arpu_segment", "target_tariff", "m0", "se_hist", "n_hist"]]
+            ["current_tariff", "arpu_segment", "target_tariff", "m0", "se_hist", "n_hist", "conv"]]
 
     # -------------------------------------------------------------- candidates
     def _candidates(self, env, prior):
@@ -113,7 +128,8 @@ class Agent:
         cand = cells.merge(prior, on=["current_tariff", "arpu_segment"], how="inner")
         cand = cand[(cand["target_tariff"] != cand["current_tariff"]) & cand["target_tariff"].isin(known)]
         a, b = self.residual
-        cand["tau"] = np.sqrt(cand["se_hist"] ** 2 + (a + b * cand["m0"].abs()) ** 2)
+        prop = cand["conv"] if self.residual_feature == "conv" else cand["m0"].abs()
+        cand["tau"] = np.sqrt(cand["se_hist"] ** 2 + a ** 2 + (b * prop) ** 2)
         cand["opt"] = (cand["m0"] + cand["tau"]) * cand["w"]
         cand = (cand.sort_values(["current_tariff", "arpu_segment", "opt", "target_tariff"],
                                  ascending=[True, True, False, True])
@@ -123,11 +139,17 @@ class Agent:
         cand["n_obs"] = 0
         return cand
 
-    def _init_belief(self, cand, scale=1.0):
+    def _init_belief(self, cand, scale=(1.0, 1.0)):
+        """Априорная совместная модель. scale = (множитель постоянной части отклонения,
+        множитель части, пропорциональной |m0|)."""
         x = np.column_stack([np.ones(len(cand)), cand["m0"].to_numpy()])
         sb = np.diag(np.square(self.beta_prior_sd))
         mu = x @ np.array([0.0, 1.0])
-        cov = x @ sb @ x.T + np.diag((scale * cand["tau"].to_numpy()) ** 2)
+        a, b = self.residual
+        # эффект = изменение ARPU × конверсия, поэтому ошибка переноса пропорциональна конверсии
+        prop = cand["conv"].to_numpy() if self.residual_feature == "conv" else cand["m0"].abs().to_numpy()
+        tau2 = cand["se_hist"].to_numpy() ** 2 + (scale[0] * a) ** 2 + (scale[1] * b * prop) ** 2
+        cov = x @ sb @ x.T + np.diag(tau2)
         return mu, cov
 
     def _posterior(self, cand, obs):
@@ -135,8 +157,8 @@ class Agent:
         выбирается по правдоподобию пилотов (эмпирический Байес): если история плохо
         предсказывает пилоты, неопределённость непроверенных связок растёт."""
         if not obs:
-            mu, cov = self._init_belief(cand, 1.0)
-            return mu, cov, 1.0
+            mu, cov = self._init_belief(cand, self.scale_grid[0])
+            return mu, cov, self.scale_grid[0]
         idx = np.array([o[0] for o in obs])
         y = np.array([o[1] for o in obs])
         r = np.diag([PER_CUSTOMER_STD ** 2 / o[2] for o in obs])
@@ -180,7 +202,7 @@ class Agent:
         пилот не несёт информации и сам по себе ожидаемо убыточен."""
         if self.stop_rule == "kg":
             return kg <= pilot_cost
-        return kg + immediate <= 0 or kg <= self.min_kg
+        return kg + min(immediate, 0.0) <= 0 or kg <= self.min_kg
 
     def _verify_target(self, cand, mu, w, cost_total):
         """Крупнейшая непроверенная ставка плана: лучшая по средней оценке связка ячейки
@@ -210,7 +232,9 @@ class Agent:
             i, kg_i = None, 0.0
             if mode == "kg":
                 kg, immediate = self._kg_scores(mu, cov, n_pilot, w, cost_total, starts, arpu_mean, n_pilot * cost)
-                score = np.where(affordable, kg + immediate, -np.inf)
+                # выгода пилотных контактов почти всегда дублирует финальную кампанию, поэтому
+                # учитываем только ожидаемый ущерб пилота, а не его «прибыль»
+                score = np.where(affordable, kg + np.minimum(immediate, 0.0), -np.inf)
                 j = int(np.argmax(score))
                 if np.isfinite(score[j]) and not self._should_stop(kg[j], immediate[j], n_pilot[j] * cost):
                     i, kg_i, why = j, float(kg[j]), f"ожидаемая польза для плана {kg[j]:,.0f}"
@@ -245,7 +269,7 @@ class Agent:
             self._log("pilot",
                       f"Пилот {row['current_tariff']}/{row['arpu_segment']} → {row['target_tariff']} "
                       f"(n={n_act}): наблюдали {y:+.3f}, до пилота {prior_i:+.3f}±{prior_sd_i:.3f}, "
-                      f"после {mu[i]:+.3f}±{post_sd:.3f}; {why}. Доверие к истории: ×{self.scale_:g} к разбросу.",
+                      f"после {mu[i]:+.3f}±{post_sd:.3f}; {why}. Разброс «история → аудитория»: ×{self.scale_[0]:g} / ×{self.scale_[1]:g}.",
                       current_tariff=row["current_tariff"], arpu_segment=row["arpu_segment"],
                       target_tariff=row["target_tariff"], channel=BASE_CHANNEL, n=n_act, observed=y,
                       post_mean=float(mu[i]), post_sd=post_sd)
@@ -306,6 +330,25 @@ class Agent:
                 chosen[j].update(channel="digital_ads", v_mean=a["v_mean"], v_low=a["v_low"],
                                  unit_cost=a["unit_cost"])
                 money_left -= extra_cost
+
+        # 2б) остаток контактов — бесплатный push по ячейкам с положительной средней оценкой
+        if self.push_leftover and contacts_left > 0:
+            s_push = self._scale(env, "push")
+            taken_cells = {r["cell"] for r in chosen}
+            rest = cand.assign(mean=mu, sd=sd)
+            rest = rest[~rest["cell"].isin(taken_cells)]
+            rest = rest.assign(v_mean=s_push * rest["mean"] * rest["arpu_mean"])
+            rest = (rest[rest["v_mean"] > 0].sort_values(["cell", "v_mean"], ascending=[True, False])
+                    .groupby("cell").head(1).sort_values("v_mean", ascending=False, kind="mergesort"))
+            for _, r in rest.iterrows():
+                take = int(min(r["n_use"], contacts_left))
+                if take <= 0:
+                    break
+                d = dict(r, take=take, channel="push", unit_cost=0.0,
+                         v_low=s_push * (r["mean"] - self.z_safe * r["sd"]) * r["arpu_mean"],
+                         low=r["mean"] - self.z_safe * r["sd"])
+                chosen.append(d)
+                contacts_left -= take
 
         # 3) журнал отказов по проверенным связкам
         chosen_keys = {(r["cell"], r["target_tariff"]) for r in chosen}
@@ -394,9 +437,10 @@ class Agent:
         """История недоступна: одинаковая нейтральная априорная оценка для всех связок ячеек."""
         tariffs = list(env.tariffs["tariff_plan_code"])
         cells = env.customer_profile[["current_tariff", "arpu_segment"]].drop_duplicates()
-        rows = [(c.current_tariff, c.arpu_segment, t, 0.0, 0.05, 0) for c in cells.itertuples()
+        rows = [(c.current_tariff, c.arpu_segment, t, 0.0, 0.05, 0, 0.1) for c in cells.itertuples()
                 for t in tariffs if t != c.current_tariff]
-        return pd.DataFrame(rows, columns=["current_tariff", "arpu_segment", "target_tariff", "m0", "se_hist", "n_hist"])
+        return pd.DataFrame(rows, columns=["current_tariff", "arpu_segment", "target_tariff", "m0", "se_hist",
+                                           "n_hist", "conv"])
 
     # -------------------------------------------------------------------- act
     def act(self, env):
