@@ -169,7 +169,7 @@ TEXT = {
     "{name}: финальный план пуст; результат включает только пилоты.": ("{name}: the final plan is empty; results include pilots only.", "{name}: соңғы жоспар бос; нәтижеге тек пилоттар кіреді."),
     "{name}: скорер отбросил некорректные кампании.": ("{name}: the scorer discarded invalid campaigns.", "{name}: бағалау жүйесі жарамсыз науқандарды алып тастады."),
     "Объяснение по сохранённому журналу: {pilots} пилотов, {cells} ячеек, {campaigns} кампаний.": ("Saved log: {pilots} pilots across {cells} cells; {campaigns} campaigns selected.", "Сақталған журнал: {cells} ұяшықта {pilots} пилот; {campaigns} науқан таңдалды."),
-    "Knowledge Gradient оценивает пользу следующего пилота для итогового плана. Пилоты калибруют исторические оценки под аудиторию. Кампании выбираются по нижней оценке после стоимости контакта; канал зависит от ожидаемой ценности абонента. Прибыль не гарантирована.": ("Knowledge Gradient estimates how much the next pilot can improve the final plan. Pilots calibrate historical estimates to the audience. Campaigns use the lower estimate after contact costs; channel choice depends on expected subscriber value. Profit is not guaranteed.", "Knowledge Gradient келесі пилоттың соңғы жоспарға пайдасын бағалайды. Пилоттар тарихи бағаларды аудиторияға бейімдейді. Науқандар байланыс шығынын шегергендегі төменгі баға бойынша таңдалады; арна абоненттің күтілетін құндылығына байланысты. Пайдаға кепілдік жоқ."),
+    "Knowledge Gradient оценивает пользу следующего пилота для итогового плана. Пилоты калибруют исторические оценки под аудиторию. План учитывает оценку эффекта, неопределённость, стоимость контакта и лимиты ресурсов. Бесплатный push на остаток контактов может выбираться по положительной средней оценке. Прибыль не гарантирована.": ("Knowledge Gradient estimates how much the next pilot can improve the final plan. Pilots calibrate historical estimates to the audience. The plan accounts for estimated effects, uncertainty, contact costs and resource limits. Free push for remaining contacts may use a positive mean estimate. Profit is not guaranteed.", "Knowledge Gradient келесі пилоттың соңғы жоспарға пайдасын бағалайды. Пилоттар тарихи бағаларды аудиторияға бейімдейді. Жоспар әсер бағасын, белгісіздікті, байланыс шығынын және ресурс шектеулерін ескереді. Қалған байланыстарға тегін push оң орташа баға бойынша таңдалуы мүмкін. Пайдаға кепілдік жоқ."),
 }
 
 PHRASES = {
@@ -192,6 +192,27 @@ PHRASES = {
     "Не берём": ("Rejected", "Қабылданбады"),
     "Резервная кампания: выгодных связок не найдено, прибыль не гарантирована.": ("Fallback campaign: no profitable combinations found; profit is not guaranteed.", "Қосалқы науқан: тиімді үйлесімдер табылмады, пайдаға кепілдік жоқ."),
 }
+
+
+TEXT.update({
+    "Flora < 0": ("Flora < 0", "Flora < 0"),
+    "минус": ("negative", "минус"),
+    "В минусе": ("Negative", "Минуста"),
+    "Flora в минусе в {n} из {m} прогонов — строки отмечены в таблице.": (
+        "Flora is negative in {n} of {m} runs — rows are marked in the table.",
+        "Flora {m} іске қосудың {n}-інде минуста — жолдар кестеде белгіленген."),
+    "Flora в минусе: 0 из {m} прогонов этой серии.": (
+        "Flora negative: 0 of {m} runs in this series.", "Flora минуста: осы сериядағы {m} іске қосудың 0-і."),
+    "Разные стенды не смешиваются: у каждого свой набор сценариев, версия и размер проверки.": (
+        "Test benches are not mixed: each has its own scenarios, version and sample size.",
+        "Стендтер араластырылмайды: әрқайсысының өз сценарийлері, нұсқасы және тексеру көлемі бар."),
+    "Худшие результаты по стендам": ("Worst results by test bench", "Стендтер бойынша ең нашар нәтижелер"),
+    "Стресс-стенд v5 · 15 сценариев × 5 seed": ("Stress bench v5 · 15 scenarios × 5 seeds",
+                                                  "v5 стресс-стенді · 15 сценарий × 5 seed"),
+    "Реалистичный стенд · миры, слабо связанные с историей": (
+        "Realistic bench · worlds weakly related to history", "Шынайы стенд · тарихпен әлсіз байланысқан әлемдер"),
+    "оригинал на русском": ("original in Russian", "түпнұсқа орыс тілінде"),
+})
 
 
 def language():
@@ -222,4 +243,4 @@ def explanation_text(run):
         return t("Оригинальный журнал · русский") + "\n\n" + original
     return t("Объяснение по сохранённому журналу: {pilots} пилотов, {cells} ячеек, {campaigns} кампаний.",
              pilots=match[1], cells=match[2], campaigns=match[3]) + "\n\n" + t(
-        "Knowledge Gradient оценивает пользу следующего пилота для итогового плана. Пилоты калибруют исторические оценки под аудиторию. Кампании выбираются по нижней оценке после стоимости контакта; канал зависит от ожидаемой ценности абонента. Прибыль не гарантирована.")
+        "Knowledge Gradient оценивает пользу следующего пилота для итогового плана. Пилоты калибруют исторические оценки под аудиторию. План учитывает оценку эффекта, неопределённость, стоимость контакта и лимиты ресурсов. Бесплатный push на остаток контактов может выбираться по положительной средней оценке. Прибыль не гарантирована.")

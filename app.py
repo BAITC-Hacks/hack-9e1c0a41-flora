@@ -567,8 +567,15 @@ def stability_view(version):
                          "Шаблон": (b["result"] or {}).get("net_arpu_gain"),
                          "Ошибка": "; ".join(x for x in (a["error"], b["error"]) if x)})
         frame = pd.DataFrame(rows)
+        flora_values = pd.to_numeric(frame["Flora"], errors="coerce")
+        frame[t("Flora < 0")] = flora_values.lt(0).map({True: t("минус"), False: ""})
         if frame["Ошибка"].ne("").any():
             st.error(t("Часть прогонов завершилась с ошибкой. См. столбец «Ошибка»."))
+        negatives = int(flora_values.lt(0).sum())
+        if negatives:
+            st.warning(t("Flora в минусе в {n} из {m} прогонов — строки отмечены в таблице.", n=negatives, m=len(frame)))
+        else:
+            st.caption(t("Flora в минусе: 0 из {m} прогонов этой серии.", m=len(frame)))
         stability_chart(frame)
         display_table(frame, hide_index=True, width="stretch",
                      column_config={c: st.column_config.NumberColumn(format="%.0f") for c in ("Flora", "Шаблон")})
@@ -576,7 +583,8 @@ def stability_view(version):
         for name in ("Flora", "Шаблон"):
             values = pd.to_numeric(frame[name], errors="coerce").dropna()
             summary.append({"Агент": name, "Медиана": values.median(), "Минимум": values.min(),
-                            "В плюсе": f"{int((values > 0).sum())}/{len(frame)}", "С результатом": len(values)})
+                            "В плюсе": f"{int((values > 0).sum())}/{len(frame)}",
+                            "В минусе": f"{int((values < 0).sum())}/{len(frame)}", "С результатом": len(values)})
         display_table(pd.DataFrame(summary), hide_index=True, width="stretch",
                      column_config={c: st.column_config.NumberColumn(format="%.0f") for c in ("Медиана", "Минимум")})
     else:
@@ -588,12 +596,25 @@ def stability_view(version):
         if not report.strip():
             st.warning(t("Стресс-отчёт RESULTS.md пока пуст."))
         else:
-            section = re.search(r"(?ms)^## Итог финальной версии v5[^\n]*\n(.*?)(?=^## |\Z)", report)
-            if language() == "ru":
-                st.markdown(section.group(1) if section else report)
-            else:
-                with st.expander(t("Оригинальный отчёт · русский"), expanded=True):
-                    st.markdown(section.group(1) if section else report)
+            def results_section(prefix):
+                found = re.search(r"(?ms)^## " + re.escape(prefix) + r"[^\n]*\n(.*?)(?=^## |\Z)", report)
+                return found.group(1) if found else None
+
+            st.caption(t("Разные стенды не смешиваются: у каждого свой набор сценариев, версия и размер проверки."))
+            blocks = [("Худшие результаты по стендам", "Отрицательные и худшие результаты по стендам", True),
+                      ("Стресс-стенд v5 · 15 сценариев × 5 seed", "Итог финальной версии v5", False),
+                      ("Реалистичный стенд · миры, слабо связанные с историей", "v5: правило риска", False)]
+            shown = 0
+            for title, prefix, expanded in blocks:
+                body = results_section(prefix)
+                if body is None:
+                    continue
+                shown += 1
+                label = t(title) if language() == "ru" else f"{t(title)} · {t('оригинал на русском')}"
+                with st.expander(label, expanded=expanded):
+                    st.markdown(body)
+            if not shown:
+                st.markdown(report)
             updated = datetime.fromtimestamp(RESULTS_PATH.stat().st_mtime).strftime("%d.%m.%Y %H:%M")
             st.caption(t("Опубликованные результаты команды · обновлены {time}. Оракул знает эффекты заранее; агент получает только пилотные наблюдения.", time=updated))
     except FileNotFoundError:
@@ -679,15 +700,20 @@ def assistant_view(pair):
 STYLES = """<style>
     :root { --ink: #252823; --muted: #70776e; --pink: #f9e8ef; --green: #397157; --yellow: #ffdc32; }
     .stApp { background: #f7f8f5; color: var(--ink); }
-    [data-testid="stHeader"] { background: transparent; }
-    [data-testid="stToolbar"] { display: none; }
+    [data-testid="stHeader"] { background: transparent; pointer-events: none; }
+    [data-testid="stHeader"] div { pointer-events: none !important; }
+    [data-testid="stHeader"] button { pointer-events: auto; }
+    [data-testid="stToolbarActions"] { display: none; }
+    [data-testid="stAppDeployButton"], [data-testid="stMainMenu"] { display: none; }
     .block-container { max-width: 1420px; padding: 1.5rem 2rem 2.5rem; }
     h1, h2, h3, p, label, button { letter-spacing: 0 !important; }
     h1 { font-size: 27px !important; font-weight: 650 !important; color: var(--ink); padding: 0 0 .3rem !important; }
     h2, h3 { font-size: 18px !important; font-weight: 650 !important; color: var(--ink); }
     p { line-height: 1.55; }
     [data-testid="stCaptionContainer"] { color: var(--muted); }
-    [data-testid="stSidebar"] { background: #242823; border-right: 0; min-width: 245px !important; max-width: 245px !important; }
+    [data-testid="stSidebar"] { background: #242823; border-right: 0; }
+    [data-testid="stSidebar"][aria-expanded="true"] { min-width: 245px !important; max-width: 245px !important; }
+    .stApp:has([data-testid="stSidebar"][aria-expanded="false"]) .st-key-top_bar { padding-left: 36px; }
     [data-testid="stSidebarContent"] { background: #242823; }
     [data-testid="stSidebarUserContent"] { padding: 1rem 1.1rem 1.2rem !important; }
     [data-testid="stSidebar"] [data-testid="stIconMaterial"] { color: #e8e9df; }
@@ -789,6 +815,7 @@ STYLES = """<style>
     }
     @media (max-width: 700px) {
         .block-container { padding: 3.5rem 1rem 2rem; }
+        .stApp:has([data-testid="stSidebar"][aria-expanded="false"]) .st-key-top_bar { padding-left: 0; }
         h1 { font-size: 25px !important; }
         .st-key-top_bar [data-testid="stHorizontalBlock"] { flex-wrap: nowrap; gap: 8px; align-items: center; }
         .st-key-top_bar [data-testid="stHorizontalBlock"] > [data-testid="stColumn"] { min-width: 0; }
@@ -822,7 +849,7 @@ def apply_theme(theme):
             .stApp { background: #fafbfc; }
             [data-testid="stSidebar"], [data-testid="stSidebarContent"] { background: #191c1f; }
             .brand-name { color: #fff; }
-            .mobile-brand { color: #333; }
+            .mobile-brand { color: #333; font: 600 24px 'Segoe UI', sans-serif; }
             .metric-tile.net { border-color: #e0e3e6; }
             .metric-tile.pink, .metric-tile.green { background: #fff; border-color: #e0e3e6; }
             .metric-tile.net .metric-label, .metric-tile.net .metric-detail { color: #59646c; }
