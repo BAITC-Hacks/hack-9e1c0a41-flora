@@ -1084,8 +1084,7 @@ def sidebar():
                     f'<div class="rail-caption">{t("ТАРИФНЫЕ КАМПАНИИ")}</div>', unsafe_allow_html=True)
         page = st.radio(t("Раздел"), pages, key="page", label_visibility="collapsed",
                         format_func=page_labels.get)
-        st.button(t("Спросить AI"), icon=":material/forum:", key="ask_ai_open", on_click=open_ai_chat,
-                  help=t("Вопросы о плане кампаний, пилотах и решениях агента"))
+        st.button(t("Спросить AI"), icon=":material/forum:", key="ask_ai_open", on_click=open_ai_chat)
         asset = ROOT / "assets" / "botanical.png"
         if asset.is_file():
             data = base64.b64encode(asset.read_bytes()).decode("ascii")
@@ -1112,8 +1111,7 @@ def ai_chat_panel(pair):
         with head_title:
             st.markdown('<div class="ai-chat-title">Flora · AI</div>', unsafe_allow_html=True)
         with head_close:
-            st.button("", icon=":material/remove:", key="ai_chat_close", on_click=close_ai_chat,
-                      help=t("Свернуть чат"))
+            st.button("", icon=":material/remove:", key="ai_chat_close", on_click=close_ai_chat)
         ai_chat_body(pair)
 
 
