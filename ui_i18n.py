@@ -1,0 +1,225 @@
+"""Offline UI translations. Agent output and exported data keep their originals."""
+
+import re
+
+import streamlit as st
+
+LANGUAGES = {"ru": "Русский", "kk": "Қазақша", "en": "English"}
+
+# Russian source text, English, Kazakh. Placeholders are identical across locales.
+TEXT = {
+    "{n} абонентов · бюджет {budget} · до {campaigns} кампаний": ("{n} subscribers · {budget} budget · up to {campaigns} campaigns", "{n} абонент · бюджет {budget} · {campaigns} науқанға дейін"),
+    "Модель": ("Model", "Модель"),
+    "Обучение": ("Learning", "Үйрену"),
+    "Итоговый план": ("Final plan", "Соңғы жоспар"),
+    "Ожидает запуска": ("Ready to run", "Іске қосуға дайын"),
+    "Результат": ("Results", "Нәтиже"),
+    "Решения": ("Decisions", "Шешімдер"),
+    "План": ("Plan", "Жоспар"),
+    "Устойчивость": ("Robustness", "Тұрақтылық"),
+    "Объяснение": ("Explanation", "Түсіндірме"),
+    "Раздел": ("Section", "Бөлім"),
+    "ТАРИФНЫЕ КАМПАНИИ": ("TARIFF CAMPAIGNS", "ТАРИФТІК НАУҚАНДАР"),
+    "Тарифные кампании": ("Tariff campaigns", "Тарифтік науқандар"),
+    "Как думает агент": ("Agent decisions", "Агент шешімдері"),
+    "План кампаний": ("Campaign plan", "Науқан жоспары"),
+    "Устойчивость стратегии": ("Strategy robustness", "Стратегия тұрақтылығы"),
+    "Объяснение решения": ("Decision rationale", "Шешім негіздемесі"),
+    "Рабочее пространство": ("Workspace", "Жұмыс кеңістігі"),
+    "Локальная среда": ("Local environment", "Жергілікті орта"),
+    "Команда Flora": ("Team Flora", "Flora командасы"),
+    "Точные решения. Бережный рост.": ("Precise decisions. Thoughtful growth.", "Дәл шешімдер. Байыпты өсу."),
+    "Розовые цветы и зелёные листья": ("Pink flowers and green leaves", "Қызғылт гүлдер мен жасыл жапырақтар"),
+    "Локально · без API-ключей": ("Local · no API keys", "Жергілікті · API кілтінсіз"),
+    "Тема {current}. Включить {target}": ("{current} theme. Switch to {target}", "{current} тақырыбы. {target} тақырыбына ауысу"),
+    "Рассчитать кампании": ("Run campaigns", "Есептеу"),
+    "Агент проводит пилоты и формирует план…": ("Running pilots and building the plan…", "Пилоттар орындалып, жоспар құрылуда…"),
+    "Seed {seed} · {time} · результат сохранён": ("Seed {seed} · {time} · result saved", "Seed {seed} · {time} · нәтиже сақталды"),
+    "Локальная мок-среда · расчёт не запущен": ("Local mock environment · not run yet", "Жергілікті сынақ ортасы · есептеу басталмады"),
+    "Код или данные изменились. Показан предыдущий расчёт.": ("Code or data changed. Showing the previous run.", "Код немесе деректер өзгерді. Алдыңғы есеп көрсетілген."),
+    "Показан результат для seed {shown}; выбранный seed {selected} ещё не рассчитан.": ("Showing seed {shown}; selected seed {selected} has not been run yet.", "Seed {shown} нәтижесі көрсетілген; таңдалған seed {selected} әлі есептелмеді."),
+    "Файлы проекта недоступны: {error}": ("Project files unavailable: {error}", "Жоба файлдары қолжетімсіз: {error}"),
+    "Данные организаторов Beeline · Симуляция, не реальные рассылки": ("Beeline organizer data · simulation, no real messages", "Beeline ұйымдастырушыларының деректері · симуляция, нақты хабарлама жіберілмейді"),
+    "ОЖИДАНИЕ РАСЧЁТА": ("AWAITING RESULTS", "НӘТИЖЕНІ КҮТУ"),
+    "ИТОГ СИМУЛЯЦИИ": ("SIMULATION RESULTS", "СИМУЛЯЦИЯ НӘТИЖЕСІ"),
+    "Суммы в условных единицах": ("Amounts in simulation units", "Сомалар шартты бірліктермен"),
+    "Чистый результат": ("Net result", "Таза нәтиже"),
+    "Затраты": ("Cost", "Шығын"),
+    "Уникальный охват": ("Unique reach", "Бірегей қамту"),
+    "Пилоты": ("Pilots", "Пилоттар"),
+    "Кампании": ("Campaigns", "Науқандар"),
+    "После стоимости контактов": ("After contact costs", "Байланыс шығынын шегергенде"),
+    "{value} к шаблону": ("{value} vs. baseline", "Үлгімен салыстырғанда {value}"),
+    "из бюджета 100 000": ("of a 100,000 budget", "100 000 бюджеттен"),
+    "абонентов": ("subscribers", "абонент"),
+    "из 20 доступных": ("of 20 available", "қолжетімді 20-дан"),
+    "из 10 доступных": ("of 10 available", "қолжетімді 10-нан"),
+    "{value}% лимита": ("{value}% of limit", "лимиттің {value}%-ы"),
+    "Каждый контакт стоит денег. Flora проверяет, какие переходы окупаются.": ("Every contact has a cost. Flora tests which tariff changes pay off.", "Әр байланыс шығын талап етеді. Flora қай тариф ауысуы тиімді екенін тексереді."),
+    "Обучение меняет результат": ("Learning changes the outcome", "Үйрену нәтижені өзгертеді"),
+    "Чистый прирост ARPU · млн условных единиц": ("Net ARPU gain · million simulation units", "ARPU таза өсімі · млн шартты бірлік"),
+    "Результаты ещё не получены": ("No results yet", "Нәтиже әлі жоқ"),
+    "Локальная симуляция · одинаковый seed для двух агентов": ("Local simulation · the same seed for both agents", "Жергілікті симуляция · екі агентке бірдей seed"),
+    "Шаблон": ("Baseline", "Үлгі"),
+    "Агент": ("Agent", "Агент"),
+    "Чистый результат, условные единицы": ("Net result, simulation units", "Таза нәтиже, шартты бірлік"),
+    "млн условных единиц": ("million simulation units", "млн шартты бірлік"),
+    "млн": ("M", "млн"),
+    "Ресурсы кампании": ("Campaign resources", "Науқан ресурстары"),
+    "Общие лимиты пилотов и финального плана": ("Shared limits for pilots and the final plan", "Пилоттар мен соңғы жоспардың ортақ лимиттері"),
+    "Бюджет": ("Budget", "Бюджет"),
+    "Контакты": ("Contacts", "Байланыстар"),
+    "Сравнение стратегий": ("Strategy comparison", "Стратегияларды салыстыру"),
+    "Условные единицы симулятора, не евро и не тенге.": ("Simulation units, not euros or tenge.", "Симулятордың шартты бірліктері, еуро немесе теңге емес."),
+    "Условные единицы симулятора.": ("Simulation units.", "Симулятордың шартты бірліктері."),
+    "Время, с": ("Time, s", "Уақыт, с"),
+    "Ошибка": ("Error", "Қате"),
+    "Мок-модель. Результат включает пилоты, стоимость контактов и дедупликацию. Это не прогноз прибыли Beeline.": ("Mock model. Includes pilots, contact costs and deduplication. This is not a Beeline profit forecast.", "Сынақ моделі. Нәтижеге пилоттар, байланыс шығыны және қайталануды жою кіреді. Бұл Beeline пайдасының болжамы емес."),
+    "Журнал пилотного обучения": ("Pilot learning log", "Пилоттық үйрену журналы"),
+    "Пилоты ещё не проведены": ("No pilots run yet", "Пилоттар әлі орындалмады"),
+    "Гипотеза → наблюдение → обновлённая оценка": ("Hypothesis → observation → updated estimate", "Гипотеза → бақылау → жаңартылған баға"),
+    "В журнале нет выполненных пилотов.": ("No completed pilots in the log.", "Журналда орындалған пилоттар жоқ."),
+    "Шаг": ("Step", "Қадам"),
+    "Шаг {step}": ("Step {step}", "{step}-қадам"),
+    "Текущий тариф": ("Current tariff", "Ағымдағы тариф"),
+    "Целевой тариф": ("Target tariff", "Мақсатты тариф"),
+    "Канал": ("Channel", "Арна"),
+    "Абонентов": ("Subscribers", "Абоненттер"),
+    "Пилот, %": ("Observed lift, %", "Бақыланған өсім, %"),
+    "До, ±2σ": ("Before, ±2σ", "Дейін, ±2σ"),
+    "После, ±2σ": ("After, ±2σ", "Кейін, ±2σ"),
+    "Решение агента": ("Agent rationale", "Агент негіздемесі"),
+    "Пилот": ("Pilot", "Пилот"),
+    "нет в журнале": ("not logged", "журналда жоқ"),
+    "После: оценка ± 2 стандартных отклонения модели. До: значения из журнала; это не гарантия прибыли и не одновременный доверительный интервал всех гипотез.": ("After: estimate ± 2 model standard deviations. Before: logged values. Not a profit guarantee or a simultaneous confidence interval for all hypotheses.", "Кейін: баға ± модельдің 2 стандартты ауытқуы. Дейін: журналдағы мәндер. Бұл пайда кепілдігі де, барлық гипотезаның бірлескен сенімділік аралығы да емес."),
+    "Положительная оценка до пилота, отрицательное наблюдение: {count}.": ("Positive prior estimate, negative observation: {count}.", "Пилотқа дейінгі баға оң, бақыланған нәтиже теріс: {count}."),
+    "Отклонённые гипотезы": ("Rejected hypotheses", "Қабылданбаған гипотезалар"),
+    "Тариф": ("Tariff", "Тариф"),
+    "Предложение": ("Offer", "Ұсыныс"),
+    "Причина": ("Reason", "Себеп"),
+    "Явных отказов в журнале этого прогона нет.": ("No explicit rejections in this run's log.", "Бұл есеп журналында айқын бас тартулар жоқ."),
+    "Исходные гипотезы": ("Initial hypotheses", "Бастапқы гипотезалар"),
+    "Финальные кампании": ("Final campaigns", "Соңғы науқандар"),
+    "Кампании ещё не выбраны": ("No campaigns selected yet", "Науқандар әлі таңдалмады"),
+    "План формируется по результатам пилотного обучения": ("The plan follows the pilot learning results", "Жоспар пилоттық үйрену нәтижелері бойынша құрылады"),
+    "Агент не сформировал таблицу финального плана.": ("The agent did not produce a final plan table.", "Агент соңғы жоспар кестесін құрмады."),
+    "Кампания": ("Campaign", "Науқан"),
+    "Сегмент": ("Segment", "Сегмент"),
+    "Ожидаемый net": ("Expected net", "Күтілетін таза нәтиже"),
+    "Нижняя оценка": ("Lower estimate", "Төменгі баға"),
+    "Обоснование": ("Rationale", "Негіздеме"),
+    "Ожидаемый net и нижняя оценка взяты из модели агента. Фактический результат скорера показан в разделе «Результат».": ("Expected net and lower estimate come from the agent model. Actual scorer output is in Results.", "Күтілетін таза нәтиже мен төменгі баға агент моделінен алынған. Бағалау жүйесінің нақты нәтижесі «Нәтиже» бөлімінде."),
+    "Портрет сегмента": ("Audience profile", "Сегмент сипаттамасы"),
+    "В сохранённом расчёте нет портрета сегмента. Требуется новый расчёт.": ("The saved run has no audience profile. Run a new evaluation.", "Сақталған есепте сегмент сипаттамасы жоқ. Қайта есептеу қажет."),
+    "Портрет недоступен: {error}": ("Audience profile unavailable: {error}", "Сегмент сипаттамасы қолжетімсіз: {error}"),
+    "Абонентов по фильтру": ("Matching subscribers", "Сүзгіге сай абоненттер"),
+    "Средний текущий ARPU": ("Mean current ARPU", "Орташа ағымдағы ARPU"),
+    "Средний прогнозный ARPU": ("Mean predicted ARPU", "Орташа болжамды ARPU"),
+    "Не используют": ("No usage", "Қолданбайды"),
+    "Небольшое": ("Light", "Аз"),
+    "Активное": ("Heavy", "Белсенді"),
+    "Низкое": ("Low", "Төмен"),
+    "Среднее": ("Medium", "Орташа"),
+    "Высокое": ("High", "Жоғары"),
+    "Неизвестно": ("Unknown", "Белгісіз"),
+    "Потребление данных": ("Data usage", "Интернет қолдану"),
+    "Потребление звонков": ("Call usage", "Қоңырау қолдану"),
+    "% абонентов": ("% of subscribers", "абоненттер үлесі, %"),
+    "Данные": ("Data", "Интернет"),
+    "Звонки": ("Calls", "Қоңыраулар"),
+    "Доля, %": ("Share, %", "Үлес, %"),
+    "Текущий ARPU, среднее": ("Current ARPU, mean", "Ағымдағы ARPU, орташа"),
+    "Прогнозный ARPU, среднее": ("Predicted ARPU, mean", "Болжамды ARPU, орташа"),
+    "Состав аудитории по фильтрам кампании до ограничения охвата и дедупликации. Data/call-сегменты здесь описательные: портрет не изменяет отбор агента.": ("Audience matching campaign filters before reach limits and deduplication. Data/call segments are descriptive; the profile does not change the agent's selection.", "Қамту шектеуі мен қайталануды жоюға дейін науқан сүзгілеріне сай аудитория құрамы. Интернет пен қоңырау сегменттері сипаттама үшін берілген, агенттің таңдауын өзгертпейді."),
+    "Десять реализаций шума": ("Ten noise realizations", "Шудың он нұсқасы"),
+    "Проверить seed 0–9": ("Test seeds 0–9", "Seed 0–9 тексеру"),
+    "Сравниваем Flora и шаблон на одинаковых seed…": ("Comparing Flora and the baseline on the same seeds…", "Flora мен үлгі бірдей seed мәндерінде салыстырылуда…"),
+    "Таблица устойчивости относится к предыдущей версии кода или данных.": ("Robustness results use a previous code or data version.", "Тұрақтылық нәтижелері кодтың немесе деректердің алдыңғы нұсқасына жатады."),
+    "Часть прогонов завершилась с ошибкой. См. столбец «Ошибка».": ("Some runs failed. See the Error column.", "Кейбір есептер қатемен аяқталды. «Қате» бағанын қараңыз."),
+    "Медиана": ("Median", "Медиана"),
+    "Минимум": ("Minimum", "Ең аз"),
+    "В плюсе": ("Positive runs", "Оң нәтижелер"),
+    "С результатом": ("With results", "Нәтижесі бар"),
+    "Серия ещё не запущена": ("The series has not run yet", "Есептер сериясы әлі басталмады"),
+    "Seed 0–9 · Flora и шаблон организаторов · одинаковые условия": ("Seeds 0–9 · Flora and the organizer baseline · equal conditions", "Seed 0–9 · Flora және ұйымдастырушылар үлгісі · бірдей жағдайлар"),
+    "Стресс-сценарии / неизвестная аудитория": ("Stress scenarios / unseen audience", "Стресс-сценарийлер / белгісіз аудитория"),
+    "Стресс-отчёт RESULTS.md пока пуст.": ("The RESULTS.md stress report is empty.", "RESULTS.md стресс-есебі әзірге бос."),
+    "Команда ещё не опубликовала RESULTS.md. Стресс-результаты не подставлены.": ("The team has not published RESULTS.md. No stress results substituted.", "Команда RESULTS.md файлын әлі жарияламады. Стресс-нәтижелер ойдан қосылмады."),
+    "Стресс-отчёт недоступен: {error}": ("Stress report unavailable: {error}", "Стресс-есеп қолжетімсіз: {error}"),
+    "Опубликованные результаты команды · обновлены {time}. Оракул знает эффекты заранее; агент получает только пилотные наблюдения.": ("Published team results · updated {time}. The oracle knows effects in advance; the agent only sees pilot observations.", "Команданың жарияланған нәтижелері · жаңартылған уақыты: {time}. Оракул әсерлерді алдын ала біледі, агент тек пилоттық бақылауларды алады."),
+    "Оригинальный отчёт · русский": ("Original report · Russian", "Түпнұсқа есеп · орысша"),
+    "Оригинальный журнал · русский": ("Original log · Russian", "Түпнұсқа журнал · орысша"),
+    "Почему выбраны эти кампании": ("Why these campaigns", "Бұл науқандар неге таңдалды"),
+    "Агент не вернул объяснение.": ("The agent returned no explanation.", "Агент түсіндірме бермеді."),
+    "Объяснение ещё не сформировано": ("No explanation yet", "Түсіндірме әлі дайын емес"),
+    "Локальное обоснование из журнала решений агента": ("Local rationale from the agent's decision log", "Агент шешімдері журналынан жергілікті негіздеме"),
+    "Спросить про план": ("Ask about the plan", "Жоспар туралы сұрау"),
+    "Во внешний API уйдут вопрос, агрегированный план и журнал. Строки профиля не отправляются. Ответ не меняет кампании и может содержать ошибки.": ("The external API receives the question, aggregated plan and log. No subscriber profile rows are sent. Answers do not change campaigns and may contain errors.", "Сыртқы API-ға сұрақ, жинақталған жоспар және журнал жіберіледі. Абонент профилінің жолдары жіберілмейді. Жауап науқандарды өзгертпейді және қате болуы мүмкін."),
+    "Локальный режим · без внешних запросов": ("Local mode · no external requests", "Жергілікті режим · сыртқы сұраусыз"),
+    "Вопрос": ("Question", "Сұрақ"),
+    "Спросить": ("Ask", "Сұрау"),
+    "Вопрос пуст.": ("The question is empty.", "Сұрақ бос."),
+    "Готовим ответ…": ("Preparing an answer…", "Жауап дайындалуда…"),
+    "Локальное объяснение агента": ("Local agent explanation", "Агенттің жергілікті түсіндірмесі"),
+    "В этом прогоне агент не сохранил текстовое объяснение.": ("The agent saved no explanation for this run.", "Агент бұл есепке түсіндірме сақтамады."),
+    "Ключ не подключён. Показано локальное объяснение без LLM.": ("No API key configured. Showing the local explanation without an LLM.", "API кілті қосылмаған. LLM-сыз жергілікті түсіндірме көрсетілді."),
+    "LLM недоступна (HTTP {code}). Показано локальное объяснение.": ("LLM unavailable (HTTP {code}). Showing the local explanation.", "LLM қолжетімсіз (HTTP {code}). Жергілікті түсіндірме көрсетілді."),
+    "Ответ LLM недоступен или некорректен. Показано локальное объяснение.": ("LLM response unavailable or invalid. Showing the local explanation.", "LLM жауабы қолжетімсіз немесе қате. Жергілікті түсіндірме көрсетілді."),
+    "Диагностика: {name}": ("Diagnostics: {name}", "Диагностика: {name}"),
+    "{name}: финальный план пуст; результат включает только пилоты.": ("{name}: the final plan is empty; results include pilots only.", "{name}: соңғы жоспар бос; нәтижеге тек пилоттар кіреді."),
+    "{name}: скорер отбросил некорректные кампании.": ("{name}: the scorer discarded invalid campaigns.", "{name}: бағалау жүйесі жарамсыз науқандарды алып тастады."),
+    "Объяснение по сохранённому журналу: {pilots} пилотов, {cells} ячеек, {campaigns} кампаний.": ("Saved log: {pilots} pilots across {cells} cells; {campaigns} campaigns selected.", "Сақталған журнал: {cells} ұяшықта {pilots} пилот; {campaigns} науқан таңдалды."),
+    "Knowledge Gradient оценивает пользу следующего пилота для итогового плана. Пилоты калибруют исторические оценки под аудиторию. Кампании выбираются по нижней оценке после стоимости контакта; канал зависит от ожидаемой ценности абонента. Прибыль не гарантирована.": ("Knowledge Gradient estimates how much the next pilot can improve the final plan. Pilots calibrate historical estimates to the audience. Campaigns use the lower estimate after contact costs; channel choice depends on expected subscriber value. Profit is not guaranteed.", "Knowledge Gradient келесі пилоттың соңғы жоспарға пайдасын бағалайды. Пилоттар тарихи бағаларды аудиторияға бейімдейді. Науқандар байланыс шығынын шегергендегі төменгі баға бойынша таңдалады; арна абоненттің күтілетін құндылығына байланысты. Пайдаға кепілдік жоқ."),
+}
+
+PHRASES = {
+    "нижняя граница не окупает контакт или в ячейке есть связка лучше.": ("the lower estimate does not cover the contact cost, or the cell has a better option.", "төменгі баға байланыс шығынын өтемейді немесе ұяшықта тиімдірек нұсқа бар."),
+    "оценка": ("estimate", "баға"),
+    "Поиск по Knowledge Gradient исчерпан: оставшиеся пилоты — на проверку крупнейших непроверенных ставок плана.": ("Knowledge Gradient search exhausted: remaining pilots verify the largest untested plan choices.", "Knowledge Gradient іздеуі аяқталды: қалған пилоттар жоспардың тексерілмеген ірі таңдауларын тексереді."),
+    "Разведка остановлена: ни один пилот не повышает ожидаемую ценность плана.": ("Exploration stopped: no pilot improves the expected plan value.", "Барлау тоқтатылды: ешбір пилот жоспардың күтілетін құндылығын арттырмайды."),
+    "Все крупные ставки плана проверены — разведка завершена.": ("All major plan choices verified; exploration complete.", "Жоспардың барлық ірі таңдаулары тексерілді; барлау аяқталды."),
+    "по калибровке пилотов": ("from pilot calibration", "пилоттармен калибрлеу бойынша"),
+    "ожидаемая польза для плана": ("expected plan value", "жоспардың күтілетін пайдасы"),
+    "проверка ставки плана, оценённой только через калибровку": ("verifying a plan choice estimated only through calibration", "тек калибрлеумен бағаланған жоспар таңдауын тексеру"),
+    "Разброс «история → аудитория»": ("History-to-audience variability", "«Тарих → аудитория» ауытқуы"),
+    "до пилота": ("before pilot", "пилотқа дейін"),
+    "наблюдали": ("observed", "бақыланған"),
+    "после": ("after", "кейін"),
+    "эффект": ("effect", "әсер"),
+    "пилоты": ("pilots", "пилоттар"),
+    "Пилот": ("Pilot", "Пилот"),
+    "абон.": ("subscribers", "абонент"),
+    "Не берём": ("Rejected", "Қабылданбады"),
+    "Резервная кампания: выгодных связок не найдено, прибыль не гарантирована.": ("Fallback campaign: no profitable combinations found; profit is not guaranteed.", "Қосалқы науқан: тиімді үйлесімдер табылмады, пайдаға кепілдік жоқ."),
+}
+
+
+def language():
+    return st.session_state.get("language", "ru")
+
+
+def t(text, **kwargs):
+    translated = TEXT.get(text)
+    result = translated[0 if language() == "en" else 1] if translated and language() != "ru" else text
+    return result.format(**kwargs) if kwargs else result
+
+
+def agent_text(text):
+    if language() == "ru":
+        return str(text)
+    result = str(text)
+    for source in sorted(PHRASES, key=len, reverse=True):
+        result = result.replace(source, PHRASES[source][0 if language() == "en" else 1])
+    return result
+
+
+def explanation_text(run):
+    original = run.get("explanation", "")
+    if language() == "ru" or not original:
+        return original
+    match = re.search(r"Агент провёл (\d+) пилотов в (\d+) ячейках.*?отобрал (\d+) кампаний", original, re.S)
+    if not match:
+        return t("Оригинальный журнал · русский") + "\n\n" + original
+    return t("Объяснение по сохранённому журналу: {pilots} пилотов, {cells} ячеек, {campaigns} кампаний.",
+             pilots=match[1], cells=match[2], campaigns=match[3]) + "\n\n" + t(
+        "Knowledge Gradient оценивает пользу следующего пилота для итогового плана. Пилоты калибруют исторические оценки под аудиторию. Кампании выбираются по нижней оценке после стоимости контакта; канал зависит от ожидаемой ценности абонента. Прибыль не гарантирована.")
