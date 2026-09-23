@@ -52,7 +52,8 @@ class Agent:
     def __init__(self, history_path="data/change_tariff.csv", pilot_size=200,
                  z_safe=0.5, z_unpiloted=1.0, max_targets_per_cell=6,
                  beta_prior_sd=(0.03, 0.5), residual=(0.02, 0.3), stop_rule="full", min_kg=1.0,
-                 scale_grid=None, verify=True, residual_feature="conv", push_leftover=True, planner="milp"):
+                 scale_grid=None, verify=True, residual_feature="conv", push_leftover=True, planner="milp",
+                 adaptive_risk=True, z_unpiloted_hard=1.5, risk_trigger=(1.5, 1.5)):
         self.history_path = history_path
         self.pilot_size = pilot_size
         self.z_safe = z_safe                    # осторожность для проверенных пилотом связок
@@ -67,6 +68,9 @@ class Agent:
         self.scale_grid = scale_grid or [(1.0, 1.0)] + [(sa, sb) for sa in (1.0, 2.0, 3.0, 5.0, 8.0)
                                                         for sb in (0.5, 1.0, 2.0, 4.0, 6.0) if (sa, sb) != (1.0, 1.0)]
         self.residual_feature = residual_feature  # от чего зависит разброс переноса: "conv" или "m0"
+        self.adaptive_risk = adaptive_risk      # если история ненадёжна: без рискованного push, строже порог
+        self.z_unpiloted_hard = z_unpiloted_hard
+        self.risk_trigger = risk_trigger        # порог масштаба (постоянная, пропорциональная часть)
         self.planner = planner                  # "milp" — точный отбор целых ячеек; "greedy" — жадный
         self.push_leftover = push_leftover      # остаток контактов — в бесплатный push по средней оценке
         self.verify = verify                    # остаток пилотов — на проверку крупнейших ставок плана
@@ -277,10 +281,21 @@ class Agent:
         return cand, mu, cov
 
     # --------------------------------------------------------------- planning
+    def _history_unreliable(self):
+        """Эмпирический Байес выбрал разброс «история → аудитория» шире априорного: калибровка по
+        пилотам (выбранным как самые перспективные) завышает оценки непроверенных ячеек."""
+        if not self.adaptive_risk:
+            return False
+        sa, sb = self.scale_
+        return sa >= self.risk_trigger[0] or sb >= self.risk_trigger[1]
+
+    def _z_unpiloted_now(self):
+        return self.z_unpiloted_hard if self._history_unreliable() else self.z_unpiloted
+
     def _options(self, env, cand, mu, sd):
         """Все допустимые варианты (связка, канал) с ожидаемой и нижней ценностью на абонента."""
         rows = []
-        z = np.where(cand["n_obs"].to_numpy() > 0, self.z_safe, self.z_unpiloted)
+        z = np.where(cand["n_obs"].to_numpy() > 0, self.z_safe, self._z_unpiloted_now())
         low = mu - z * sd
         for ch in FINAL_CHANNELS:
             s = self._scale(env, ch)
@@ -341,7 +356,8 @@ class Agent:
                 self._log("decision", f"Ошибка оптимизатора ({type(e).__name__}) — используем жадный отбор.")
             if chosen is not None:
                 return self._pack_and_report(env, cand, mu, sd, chosen)
-            self._log("decision", "Оптимизатор не нашёл решения — используем жадный отбор.")
+            if not any("Ошибка оптимизатора" in t["note"] for t in self.trace):
+                self._log("decision", "Оптимизатор не нашёл решения — используем жадный отбор.")
 
         # 1) по ячейке: лучшая связка по нижней ценности через дешёвые каналы (push/sms)
         cheap = opts[opts["channel"].isin(["push", "sms"])]
@@ -411,9 +427,9 @@ class Agent:
         used_contacts = sum(r["take"] for r in chosen)
         used_money = sum(r["take"] * r["unit_cost"] for r in chosen)
         slots_used = len({(r["arpu_segment"], r["target_tariff"], r["channel"]) for r in chosen})
-        if self.push_leftover:
+        if self.push_leftover and not self._history_unreliable():
             s_push = self._scale(env, "push")
-            z = np.where(cand["n_obs"].to_numpy() > 0, self.z_safe, self.z_unpiloted)
+            z = np.where(cand["n_obs"].to_numpy() > 0, self.z_safe, self._z_unpiloted_now())
             rest = cand.assign(mean=mu, sd=sd, low=mu - z * sd, channel="push", unit_cost=0.0)
             rest = rest.assign(v_mean=s_push * rest["mean"] * rest["arpu_mean"],
                                v_low=s_push * rest["low"] * rest["arpu_mean"])
